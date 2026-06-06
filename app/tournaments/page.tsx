@@ -3,9 +3,10 @@
 import { supabase } from '@/lib/supabaseClient';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { User } from '@supabase/supabase-js';
 
 export default function TournamentsPage() {
-    const [user, setUser] = useState(null);
+    const [user, setUser] = useState<User | null>(null);
     const [tournaments, setTournaments] = useState([]);
     const [newTournamentName, setNewTournamentName] = useState('');
     const [newTournamentPassword, setNewTournamentPassword] = useState('');
