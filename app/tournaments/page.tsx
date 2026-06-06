@@ -5,9 +5,17 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { User } from '@supabase/supabase-js';
 
+interface Tournament {
+    id: string;
+    name: string;
+    access_password: string;
+    created_by_user_id: string;
+    created_at: string;
+}
+
 export default function TournamentsPage() {
     const [user, setUser] = useState<User | null>(null);
-    const [tournaments, setTournaments] = useState([]);
+    const [tournaments, setTournaments] = useState<Tournament[]>([]);
     const [newTournamentName, setNewTournamentName] = useState('');
     const [newTournamentPassword, setNewTournamentPassword] = useState('');
     const [joinTournamentName, setJoinTournamentName] = useState('');
