@@ -13,6 +13,12 @@ interface Tournament {
     created_at: string;
 }
 
+// Тип для данных, возвращаемых Supabase
+type TournamentMemberWithTournament = {
+    tournament_id: string;
+    tournaments: Tournament;
+};
+
 export default function TournamentsPage() {
     const [user, setUser] = useState<User | null>(null);
     const [tournaments, setTournaments] = useState<Tournament[]>([]);
@@ -35,8 +41,16 @@ export default function TournamentsPage() {
             .from('tournament_members')
             .select('tournament_id, tournaments(*)')
             .eq('user_id', user.id);
-        if (error) console.error(error);
-        else setTournaments(data.map(m => m.tournaments));
+
+        if (error) {
+            console.error(error);
+            return;
+        }
+
+        // Явное приведение типа
+        const typedData = data as unknown as TournamentMemberWithTournament[];
+        const tournamentsList = typedData.map(item => item.tournaments);
+        setTournaments(tournamentsList);
     };
 
     useEffect(() => {
@@ -45,6 +59,7 @@ export default function TournamentsPage() {
 
     const createTournament = async () => {
         if (!newTournamentName || !newTournamentPassword) return alert('Заполните название и пароль');
+        if (!user) return;
         const { data: tournament, error: createError } = await supabase
             .from('tournaments')
             .insert([{ name: newTournamentName, access_password: newTournamentPassword, created_by_user_id: user.id }])
@@ -64,6 +79,7 @@ export default function TournamentsPage() {
 
     const joinTournament = async () => {
         if (!joinTournamentName || !joinPassword) return alert('Введите название турнира и пароль');
+        if (!user) return;
         const { data: tournament, error: findError } = await supabase
             .from('tournaments')
             .select('*')
