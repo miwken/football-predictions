@@ -328,7 +328,7 @@ export default function TournamentPage() {
         if (!acc[key]) acc[key] = [];
         acc[key].push(match);
         return acc;
-    }, {});
+    }, {} as Record<string, Match[]>);
 
     if (!user) return <div className="p-4">Загрузка пользователя...</div>;
     if (loading) return (
