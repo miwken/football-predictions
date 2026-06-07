@@ -66,47 +66,45 @@ export default function TournamentPage() {
 
         for (let attempt = 0; attempt <= retries; attempt++) {
             try {
-                const { data, error: fetchError } = await supabase
+                const { data: matchesData, error: matchesError } = await supabase
                     .from('matches')
-                    .select(`
-            id,
-            match_number,
-            home_team_id,
-            away_team_id,
-            city_id,
-            stage_id,
-            kickoff_at,
-            match_label,
-            home_team:teams!inner (team_name),
-            away_team:teams!inner (team_name),
-            city:host_cities (city_name, venue_name),
-            stage:tournament_stages (stage_name, stage_order)
-          `)
+                    .select('*')
                     .order('kickoff_at', { ascending: true })
                     .abortSignal(controller.signal);
 
-                if (fetchError) throw fetchError;
-                if (!data || data.length === 0) {
+                if (matchesError) throw matchesError;
+                if (!matchesData || matchesData.length === 0) {
                     setMatches([]);
-                } else {
-                    const formatted = data.map((m: any) => ({
-                        id: m.id,
-                        match_number: m.match_number,
-                        home_team_id: m.home_team_id,
-                        away_team_id: m.away_team_id,
-                        city_id: m.city_id,
-                        stage_id: m.stage_id,
-                        kickoff_at: m.kickoff_at,
-                        match_label: m.match_label,
-                        home_team_name: m.home_team?.team_name || 'TBD',
-                        away_team_name: m.away_team?.team_name || 'TBD',
-                        city_name: m.city?.city_name || '',
-                        venue_name: m.city?.venue_name || '',
-                        stage_name: m.stage?.stage_name || '',
-                        stage_order: m.stage?.stage_order || 0,
-                    }));
-                    setMatches(formatted);
+                    setLoading(false);
+                    return;
                 }
+
+                const { data: teamsData } = await supabase.from('teams').select('id, team_name');
+                const teamsMap = new Map();
+                teamsData?.forEach(t => teamsMap.set(String(t.id), t.team_name));
+
+                const { data: citiesData } = await supabase.from('host_cities').select('id, city_name, venue_name');
+                const citiesMap = new Map();
+                citiesData?.forEach(c => citiesMap.set(String(c.id), { city_name: c.city_name, venue_name: c.venue_name }));
+
+                const { data: stagesData } = await supabase.from('tournament_stages').select('id, stage_name, stage_order');
+                const stagesMap = new Map();
+                stagesData?.forEach(s => stagesMap.set(String(s.id), { stage_name: s.stage_name, stage_order: s.stage_order }));
+
+                const fullMatches = matchesData.map(m => {
+                    const city = citiesMap.get(String(m.city_id)) || { city_name: '', venue_name: '' };
+                    const stage = stagesMap.get(String(m.stage_id)) || { stage_name: '', stage_order: 0 };
+                    return {
+                        ...m,
+                        home_team_name: teamsMap.get(String(m.home_team_id)) || 'TBD',
+                        away_team_name: teamsMap.get(String(m.away_team_id)) || 'TBD',
+                        city_name: city.city_name,
+                        venue_name: city.venue_name,
+                        stage_name: stage.stage_name,
+                        stage_order: stage.stage_order,
+                    };
+                });
+                setMatches(fullMatches);
                 setLoading(false);
                 return;
             } catch (err: any) {
@@ -171,22 +169,12 @@ export default function TournamentPage() {
 
     const fetchLeaderboard = useCallback(async () => {
         if (!id) return;
-        const { data: members, error } = await supabase
+        const { data: members } = await supabase
             .from('tournament_members')
             .select('user_id, users(display_name)')
             .eq('tournament_id', id);
-
-        if (error) {
-            console.error('Ошибка загрузки участников:', error);
-            return;
-        }
-        if (!members || members.length === 0) {
-            setLeaderboard([]);
-            return;
-        }
-
+        if (!members) return;
         const leaderData: { user_id: string; display_name: string; total_points: number }[] = [];
-
         for (const m of members) {
             const displayName = (m.users as any)?.display_name || 'Anonymous';
             const { data: pointsData } = await supabase
@@ -201,7 +189,6 @@ export default function TournamentPage() {
                 total_points: total,
             });
         }
-
         leaderData.sort((a, b) => b.total_points - a.total_points);
         setLeaderboard(leaderData);
     }, [id]);
