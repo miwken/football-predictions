@@ -23,21 +23,19 @@ interface Match {
 
 const CACHE_TTL = 60 * 60 * 1000; // 1 час
 
-async function fetchWithCache(key: string, fetcher: () => Promise<any>) {
-    if (typeof window !== 'undefined') {
-        const cached = localStorage.getItem(key);
-        if (cached) {
-            const { data, timestamp } = JSON.parse(cached);
-            if (Date.now() - timestamp < CACHE_TTL) {
-                return data;
-            }
-        }
-    }
-    const data = await fetcher();
-    if (typeof window !== 'undefined') {
-        localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }));
-    }
-    return data;
+async function getCached(key: string) {
+    if (typeof window === 'undefined') return null;
+    const cached = localStorage.getItem(key);
+    if (!cached) return null;
+    const { data, timestamp } = JSON.parse(cached);
+    if (Date.now() - timestamp < CACHE_TTL) return data;
+    localStorage.removeItem(key);
+    return null;
+}
+
+async function setCache(key: string, data: any) {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }));
 }
 
 export default function TournamentPage() {
@@ -55,6 +53,7 @@ export default function TournamentPage() {
     const [loadStatus, setLoadStatus] = useState('');
     const abortControllerRef = useRef<AbortController | null>(null);
 
+    // Пользователь и турнир
     useEffect(() => {
         supabase.auth.getUser().then(({ data }) => {
             if (!data.user) return;
@@ -76,7 +75,18 @@ export default function TournamentPage() {
         });
     }, [id]);
 
-    const fetchAllData = useCallback(async () => {
+    // Очистка кэша (только для создателя)
+    const clearCache = () => {
+        localStorage.removeItem('matches_cache');
+        localStorage.removeItem('teams_cache');
+        localStorage.removeItem('cities_cache');
+        localStorage.removeItem('stages_cache');
+        alert('Кэш очищен. Обновите страницу для загрузки свежих данных.');
+        fetchAllData(true);
+    };
+
+    // Основная загрузка данных с кэшем
+    const fetchAllData = useCallback(async (forceRefresh = false) => {
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
         abortControllerRef.current = controller;
@@ -85,32 +95,51 @@ export default function TournamentPage() {
         setError(null);
 
         try {
-            setLoadStatus('Загрузка матчей...');
-            const { data: matchesData, error: matchesError } = await supabase
-                .from('matches')
-                .select('*')
-                .order('kickoff_at', { ascending: true })
-                .abortSignal(controller.signal);
-            if (matchesError) throw matchesError;
-            if (!matchesData || matchesData.length === 0) {
-                setMatches([]);
-                setLoading(false);
-                return;
+            // 1. Матчи (с кэшем)
+            let matchesData = null;
+            if (!forceRefresh) {
+                matchesData = await getCached('matches_cache');
+                if (matchesData) {
+                    setLoadStatus('Загрузка из кэша...');
+                    setMatches(matchesData);
+                    // асинхронно обновим в фоне, чтобы свежие данные были при следующем заходе
+                    forceRefresh = true;
+                }
+            }
+            if (!matchesData || forceRefresh) {
+                setLoadStatus('Загрузка матчей с сервера...');
+                const { data, error: matchesError } = await supabase
+                    .from('matches')
+                    .select('*')
+                    .order('kickoff_at', { ascending: true })
+                    .abortSignal(controller.signal);
+                if (matchesError) throw matchesError;
+                matchesData = data;
+                if (data && data.length) {
+                    await setCache('matches_cache', data);
+                }
             }
 
+            // 2. Справочники (с кэшем)
             setLoadStatus('Загрузка справочников...');
-            const teamsData = await fetchWithCache('teams_cache', async () => {
+            let teamsData = await getCached('teams_cache');
+            if (!teamsData) {
                 const { data } = await supabase.from('teams').select('id, team_name');
-                return data;
-            });
-            const citiesData = await fetchWithCache('cities_cache', async () => {
+                teamsData = data;
+                await setCache('teams_cache', teamsData);
+            }
+            let citiesData = await getCached('cities_cache');
+            if (!citiesData) {
                 const { data } = await supabase.from('host_cities').select('id, city_name, venue_name');
-                return data;
-            });
-            const stagesData = await fetchWithCache('stages_cache', async () => {
+                citiesData = data;
+                await setCache('cities_cache', citiesData);
+            }
+            let stagesData = await getCached('stages_cache');
+            if (!stagesData) {
                 const { data } = await supabase.from('tournament_stages').select('id, stage_name, stage_order');
-                return data;
-            });
+                stagesData = data;
+                await setCache('stages_cache', stagesData);
+            }
 
             const teamsMap = new Map();
             (teamsData || []).forEach((t: any) => teamsMap.set(String(t.id), t.team_name));
@@ -121,7 +150,7 @@ export default function TournamentPage() {
             const stagesMap = new Map();
             (stagesData || []).forEach((s: any) => stagesMap.set(String(s.id), { stage_name: s.stage_name, stage_order: s.stage_order }));
 
-            const fullMatches = matchesData.map((m: any) => {
+            const fullMatches = (matchesData || []).map((m: any) => {
                 const city = citiesMap.get(String(m.city_id)) || { city_name: '', venue_name: '' };
                 const stage = stagesMap.get(String(m.stage_id)) || { stage_name: '', stage_order: 0 };
                 return {
@@ -151,6 +180,7 @@ export default function TournamentPage() {
         };
     }, [fetchAllData]);
 
+    // Результаты матчей
     useEffect(() => {
         const fetchResults = async () => {
             const { data } = await supabase.from('match_results').select('match_id, score_home, score_away');
@@ -163,6 +193,7 @@ export default function TournamentPage() {
         fetchResults();
     }, []);
 
+    // Прогнозы пользователя
     useEffect(() => {
         if (!user || !id) return;
         supabase
@@ -179,6 +210,7 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
+    // Бустеры
     useEffect(() => {
         if (!user || !id) return;
         supabase
@@ -191,6 +223,7 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
+    // Таблица лидеров
     const fetchLeaderboard = useCallback(async () => {
         if (!id) return;
         const { data: members } = await supabase
@@ -221,6 +254,7 @@ export default function TournamentPage() {
         fetchLeaderboard();
     }, [fetchLeaderboard, predictions, matchResults]);
 
+    // Сохранение результата (только создатель)
     const saveMatchResult = async (matchId: string, home: number, away: number) => {
         if (!isCreator) return alert('Только создатель турнира может вводить результаты');
         const { error } = await supabase
@@ -288,12 +322,28 @@ export default function TournamentPage() {
         }
     };
 
+    // Группировка по stage_order (или stage_name, если stage_order не задан)
     const matchesByStage = matches.reduce((acc, match) => {
-        const stage = match.stage_order;
-        if (!acc[stage]) acc[stage] = [];
-        acc[stage].push(match);
+        let key = match.stage_order;
+        if (key === 0 && match.stage_name) {
+            // fallback: используем stage_name как ключ, но это строка, придётся преобразовать
+            // лучше использовать числовое поле, но если его нет, группируем по названию
+            key = match.stage_name;
+        }
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(match);
         return acc;
-    }, {} as Record<number, Match[]>);
+    }, {} as Record<any, Match[]>);
+
+    // Сортировка ключей: числа сначала, потом строки
+    const sortedStages = Object.keys(matchesByStage).sort((a, b) => {
+        const numA = Number(a);
+        const numB = Number(b);
+        if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+        if (!isNaN(numA)) return -1;
+        if (!isNaN(numB)) return 1;
+        return String(a).localeCompare(String(b));
+    });
 
     if (!user) return <div className="p-4">Загрузка пользователя...</div>;
     if (loading) return (
@@ -305,13 +355,22 @@ export default function TournamentPage() {
     if (error) return (
         <div className="p-4">
             <p className="text-red-500">{error}</p>
-            <button onClick={() => fetchAllData()} className="mt-2 bg-blue-500 text-white p-2 rounded">Повторить</button>
+            <button onClick={() => fetchAllData(true)} className="mt-2 bg-blue-500 text-white p-2 rounded">Повторить</button>
         </div>
     );
 
     return (
         <div className="p-4 max-w-5xl mx-auto">
-            <h1 className="text-2xl font-bold mb-4">Турнир: {tournamentName}</h1>
+            <div className="flex justify-between items-center mb-4">
+                <h1 className="text-2xl font-bold">Турнир: {tournamentName}</h1>
+                {isCreator && (
+                    <button onClick={clearCache} className="bg-gray-500 text-white text-sm p-1 px-3 rounded">
+                        Очистить кэш
+                    </button>
+                )}
+            </div>
+
+            {/* Таблица лидеров */}
             <div className="mb-8 p-4 border rounded bg-gray-50">
                 <h2 className="text-xl font-semibold mb-2">Таблица лидеров</h2>
                 <table className="min-w-full bg-white">
@@ -328,10 +387,13 @@ export default function TournamentPage() {
                     </tbody>
                 </table>
             </div>
-            {Object.entries(matchesByStage).sort(([a], [b]) => Number(a) - Number(b)).map(([stageOrder, stageMatches]) => {
-                const stageName = stageMatches[0]?.stage_name || `Этап ${stageOrder}`;
+
+            {/* Список матчей по этапам */}
+            {sortedStages.map(stageKey => {
+                const stageMatches = matchesByStage[stageKey];
+                const stageName = stageMatches[0]?.stage_name || `Этап ${stageKey}`;
                 return (
-                    <div key={stageOrder} className="mb-8">
+                    <div key={stageKey} className="mb-8">
                         <h2 className="text-xl font-semibold bg-gray-100 p-2">{stageName}</h2>
                         {stageMatches.map(match => {
                             const pred = predictions[match.id] || {};
