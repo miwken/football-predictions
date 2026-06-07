@@ -53,7 +53,7 @@ export default function TournamentPage() {
     const [loadStatus, setLoadStatus] = useState('');
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    // Пользователь и турнир
+    // Получение пользователя и проверка создателя
     useEffect(() => {
         supabase.auth.getUser().then(({ data }) => {
             if (!data.user) return;
@@ -69,23 +69,14 @@ export default function TournamentPage() {
         });
     }, [id]);
 
+    // Название турнира
     useEffect(() => {
         supabase.from('tournaments').select('name').eq('id', id).single().then(({ data }) => {
             if (data) setTournamentName(data.name);
         });
     }, [id]);
 
-    // Очистка кэша (только для создателя)
-    const clearCache = () => {
-        localStorage.removeItem('matches_cache');
-        localStorage.removeItem('teams_cache');
-        localStorage.removeItem('cities_cache');
-        localStorage.removeItem('stages_cache');
-        alert('Кэш очищен. Обновите страницу для загрузки свежих данных.');
-        fetchAllData(true);
-    };
-
-    // Основная загрузка данных с кэшем
+    // Основная функция загрузки всех данных (с кэшем)
     const fetchAllData = useCallback(async (forceRefresh = false) => {
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
@@ -99,13 +90,14 @@ export default function TournamentPage() {
             let matchesData = null;
             if (!forceRefresh) {
                 matchesData = await getCached('matches_cache');
-                if (matchesData) {
-                    setLoadStatus('Загрузка из кэша...');
-                    setMatches(matchesData);
-                    // асинхронно обновим в фоне, чтобы свежие данные были при следующем заходе
-                    forceRefresh = true;
-                }
             }
+            if (matchesData) {
+                setLoadStatus('Загрузка из кэша...');
+                setMatches(matchesData);
+                // После показа кэша обновим в фоне (асинхронно)
+                forceRefresh = true;
+            }
+
             if (!matchesData || forceRefresh) {
                 setLoadStatus('Загрузка матчей с сервера...');
                 const { data, error: matchesError } = await supabase
@@ -120,7 +112,7 @@ export default function TournamentPage() {
                 }
             }
 
-            // 2. Справочники (с кэшем)
+            // 2. Справочники (команды, города, стадии) с кэшем
             setLoadStatus('Загрузка справочников...');
             let teamsData = await getCached('teams_cache');
             if (!teamsData) {
@@ -254,7 +246,7 @@ export default function TournamentPage() {
         fetchLeaderboard();
     }, [fetchLeaderboard, predictions, matchResults]);
 
-    // Сохранение результата (только создатель)
+    // Сохранение результата (создатель)
     const saveMatchResult = async (matchId: string, home: number, away: number) => {
         if (!isCreator) return alert('Только создатель турнира может вводить результаты');
         const { error } = await supabase
@@ -268,6 +260,7 @@ export default function TournamentPage() {
         }
     };
 
+    // Изменение прогноза
     const handlePredictionChange = (matchId: string, field: 'home' | 'away', value: string) => {
         setPredictions(prev => ({
             ...prev,
@@ -278,6 +271,7 @@ export default function TournamentPage() {
         }));
     };
 
+    // Бустер
     const handleBooster = async (matchId: string, stageOrder: number) => {
         if (boostedRounds.has(stageOrder)) {
             alert('Вы уже использовали бустер на этом этапе');
@@ -297,6 +291,7 @@ export default function TournamentPage() {
         }));
     };
 
+    // Сохранение прогноза
     const savePrediction = async (match: Match) => {
         const pred = predictions[match.id];
         if (!pred || pred.home === undefined || pred.away === undefined) {
@@ -322,28 +317,18 @@ export default function TournamentPage() {
         }
     };
 
-    // Группировка по stage_order (или stage_name, если stage_order не задан)
-    const matchesByStage = matches.reduce((acc, match) => {
-        let key = match.stage_order;
-        if (key === 0 && match.stage_name) {
-            // fallback: используем stage_name как ключ, но это строка, придётся преобразовать
-            // лучше использовать числовое поле, но если его нет, группируем по названию
-            key = match.stage_name;
+    // Группировка матчей по этапам (исправленная, без ошибок типов)
+    const matchesByStage: Record<string, Match[]> = matches.reduce((acc, match) => {
+        let key: string;
+        if (match.stage_order && match.stage_order > 0) {
+            key = String(match.stage_order);
+        } else {
+            key = match.stage_name || 'other';
         }
         if (!acc[key]) acc[key] = [];
         acc[key].push(match);
         return acc;
-    }, {} as Record<any, Match[]>);
-
-    // Сортировка ключей: числа сначала, потом строки
-    const sortedStages = Object.keys(matchesByStage).sort((a, b) => {
-        const numA = Number(a);
-        const numB = Number(b);
-        if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
-        if (!isNaN(numA)) return -1;
-        if (!isNaN(numB)) return 1;
-        return String(a).localeCompare(String(b));
-    });
+    }, {});
 
     if (!user) return <div className="p-4">Загрузка пользователя...</div>;
     if (loading) return (
@@ -361,16 +346,12 @@ export default function TournamentPage() {
 
     return (
         <div className="p-4 max-w-5xl mx-auto">
-            <div className="flex justify-between items-center mb-4">
-                <h1 className="text-2xl font-bold">Турнир: {tournamentName}</h1>
-                {isCreator && (
-                    <button onClick={clearCache} className="bg-gray-500 text-white text-sm p-1 px-3 rounded">
-                        Очистить кэш
-                    </button>
-                )}
-            </div>
-
-            {/* Таблица лидеров */}
+            <h1 className="text-2xl font-bold mb-4">Турнир: {tournamentName}</h1>
+            {isCreator && (
+                <div className="mb-4 text-right">
+                    <button onClick={() => fetchAllData(true)} className="bg-gray-300 p-1 px-3 rounded text-sm">Сбросить кэш</button>
+                </div>
+            )}
             <div className="mb-8 p-4 border rounded bg-gray-50">
                 <h2 className="text-xl font-semibold mb-2">Таблица лидеров</h2>
                 <table className="min-w-full bg-white">
@@ -387,52 +368,56 @@ export default function TournamentPage() {
                     </tbody>
                 </table>
             </div>
-
-            {/* Список матчей по этапам */}
-            {sortedStages.map(stageKey => {
-                const stageMatches = matchesByStage[stageKey];
-                const stageName = stageMatches[0]?.stage_name || `Этап ${stageKey}`;
-                return (
-                    <div key={stageKey} className="mb-8">
-                        <h2 className="text-xl font-semibold bg-gray-100 p-2">{stageName}</h2>
-                        {stageMatches.map(match => {
-                            const pred = predictions[match.id] || {};
-                            const isPast = new Date() >= new Date(match.kickoff_at);
-                            const boosterDisabled = isPast || pred.booster || boostedRounds.has(match.stage_order);
-                            const result = matchResults[match.id];
-                            return (
-                                <div key={match.id} className="border p-3 mb-2 rounded">
-                                    <div className="font-bold">{match.home_team_name} vs {match.away_team_name}</div>
-                                    <div className="text-sm text-gray-500">{new Date(match.kickoff_at).toLocaleString()} {match.venue_name && ` • ${match.venue_name}`}</div>
-                                    {result && <div className="text-sm text-green-700 mt-1">Результат: {result.home} : {result.away}</div>}
-                                    <div className="flex flex-wrap gap-2 mt-2 items-center">
-                                        <input type="number" placeholder="0" className="border p-1 w-16 text-center" value={pred.home !== undefined ? pred.home : ''} onChange={(e) => handlePredictionChange(match.id, 'home', e.target.value)} disabled={isPast} />
-                                        <span>-</span>
-                                        <input type="number" placeholder="0" className="border p-1 w-16 text-center" value={pred.away !== undefined ? pred.away : ''} onChange={(e) => handlePredictionChange(match.id, 'away', e.target.value)} disabled={isPast} />
-                                        <button onClick={() => savePrediction(match)} disabled={isPast} className="bg-blue-500 text-white p-1 px-3 rounded disabled:bg-gray-300">Сохранить</button>
-                                        <button onClick={() => handleBooster(match.id, match.stage_order)} disabled={boosterDisabled} className={`p-1 px-3 rounded ${boosterDisabled ? 'bg-gray-300' : 'bg-yellow-500 text-white'}`}>{pred.booster ? 'Бустер ✔' : 'x2 бустер'}</button>
-                                    </div>
-                                    {isCreator && (
-                                        <div className="mt-2 pt-2 border-t flex gap-2 items-center">
-                                            <span className="text-sm font-medium text-gray-600">Ввести результат:</span>
-                                            <input type="number" placeholder="0" className="border p-1 w-16 text-center" id={`result_home_${match.id}`} defaultValue={result?.home ?? ''} />
+            {Object.entries(matchesByStage)
+                .sort(([a], [b]) => {
+                    const aNum = parseInt(a);
+                    const bNum = parseInt(b);
+                    if (!isNaN(aNum) && !isNaN(bNum)) return aNum - bNum;
+                    return a.localeCompare(b);
+                })
+                .map(([key, stageMatches]) => {
+                    const stageName = stageMatches[0]?.stage_name || `Этап ${key}`;
+                    return (
+                        <div key={key} className="mb-8">
+                            <h2 className="text-xl font-semibold bg-gray-100 p-2">{stageName}</h2>
+                            {stageMatches.map(match => {
+                                const pred = predictions[match.id] || {};
+                                const isPast = new Date() >= new Date(match.kickoff_at);
+                                const boosterDisabled = isPast || pred.booster || boostedRounds.has(match.stage_order);
+                                const result = matchResults[match.id];
+                                return (
+                                    <div key={match.id} className="border p-3 mb-2 rounded">
+                                        <div className="font-bold">{match.home_team_name} vs {match.away_team_name}</div>
+                                        <div className="text-sm text-gray-500">{new Date(match.kickoff_at).toLocaleString()} {match.venue_name && ` • ${match.venue_name}`}</div>
+                                        {result && <div className="text-sm text-green-700 mt-1">Результат: {result.home} : {result.away}</div>}
+                                        <div className="flex flex-wrap gap-2 mt-2 items-center">
+                                            <input type="number" placeholder="0" className="border p-1 w-16 text-center" value={pred.home !== undefined ? pred.home : ''} onChange={(e) => handlePredictionChange(match.id, 'home', e.target.value)} disabled={isPast} />
                                             <span>-</span>
-                                            <input type="number" placeholder="0" className="border p-1 w-16 text-center" id={`result_away_${match.id}`} defaultValue={result?.away ?? ''} />
-                                            <button onClick={() => {
-                                                const home = (document.getElementById(`result_home_${match.id}`) as HTMLInputElement).value;
-                                                const away = (document.getElementById(`result_away_${match.id}`) as HTMLInputElement).value;
-                                                if (home === '' || away === '') return alert('Введите оба значения');
-                                                saveMatchResult(match.id, parseInt(home), parseInt(away));
-                                            }} className="bg-green-600 text-white p-1 px-3 rounded">Сохранить результат</button>
+                                            <input type="number" placeholder="0" className="border p-1 w-16 text-center" value={pred.away !== undefined ? pred.away : ''} onChange={(e) => handlePredictionChange(match.id, 'away', e.target.value)} disabled={isPast} />
+                                            <button onClick={() => savePrediction(match)} disabled={isPast} className="bg-blue-500 text-white p-1 px-3 rounded disabled:bg-gray-300">Сохранить</button>
+                                            <button onClick={() => handleBooster(match.id, match.stage_order)} disabled={boosterDisabled} className={`p-1 px-3 rounded ${boosterDisabled ? 'bg-gray-300' : 'bg-yellow-500 text-white'}`}>{pred.booster ? 'Бустер ✔' : 'x2 бустер'}</button>
                                         </div>
-                                    )}
-                                    {isPast && !result && <div className="text-xs text-red-500 mt-1">Прогноз закрыт, результат ещё не введён</div>}
-                                </div>
-                            );
-                        })}
-                    </div>
-                );
-            })}
+                                        {isCreator && (
+                                            <div className="mt-2 pt-2 border-t flex gap-2 items-center">
+                                                <span className="text-sm font-medium text-gray-600">Ввести результат:</span>
+                                                <input type="number" placeholder="0" className="border p-1 w-16 text-center" id={`result_home_${match.id}`} defaultValue={result?.home ?? ''} />
+                                                <span>-</span>
+                                                <input type="number" placeholder="0" className="border p-1 w-16 text-center" id={`result_away_${match.id}`} defaultValue={result?.away ?? ''} />
+                                                <button onClick={() => {
+                                                    const home = (document.getElementById(`result_home_${match.id}`) as HTMLInputElement).value;
+                                                    const away = (document.getElementById(`result_away_${match.id}`) as HTMLInputElement).value;
+                                                    if (home === '' || away === '') return alert('Введите оба значения');
+                                                    saveMatchResult(match.id, parseInt(home), parseInt(away));
+                                                }} className="bg-green-600 text-white p-1 px-3 rounded">Сохранить результат</button>
+                                            </div>
+                                        )}
+                                        {isPast && !result && <div className="text-xs text-red-500 mt-1">Прогноз закрыт, результат ещё не введён</div>}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    );
+                })}
         </div>
     );
 }
