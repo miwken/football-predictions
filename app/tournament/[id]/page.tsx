@@ -35,7 +35,7 @@ export default function TournamentPage() {
     const [error, setError] = useState<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    // Загрузка пользователя и проверка создателя
+    // Получить текущего пользователя и проверить создателя
     useEffect(() => {
         supabase.auth.getUser().then(({ data }) => {
             if (!data.user) return;
@@ -51,7 +51,7 @@ export default function TournamentPage() {
         });
     }, [id]);
 
-    // Загрузка названия турнира
+    // Загрузить название турнира
     useEffect(() => {
         supabase.from('tournaments').select('name').eq('id', id).single().then(({ data }) => {
             if (data) setTournamentName(data.name);
@@ -119,7 +119,7 @@ export default function TournamentPage() {
                     setError('Не удалось загрузить матчи. Проверьте соединение и попробуйте снова.');
                     setLoading(false);
                 } else {
-                    await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1))); // задержка перед повторной попыткой
+                    await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
                 }
             }
         }
@@ -132,7 +132,7 @@ export default function TournamentPage() {
         };
     }, [fetchMatchesWithRetry]);
 
-    // Остальные запросы (результаты, прогнозы, бустеры, лидерборд)
+    // Загрузить результаты матчей
     useEffect(() => {
         const fetchResults = async () => {
             const { data } = await supabase.from('match_results').select('match_id, score_home, score_away');
@@ -145,6 +145,7 @@ export default function TournamentPage() {
         fetchResults();
     }, []);
 
+    // Загрузить прогнозы пользователя
     useEffect(() => {
         if (!user || !id) return;
         supabase
@@ -161,6 +162,7 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
+    // Загрузить бустеры
     useEffect(() => {
         if (!user || !id) return;
         supabase
@@ -173,6 +175,7 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
+    // Таблица лидеров (исправленная версия)
     const fetchLeaderboard = useCallback(async () => {
         if (!id) return;
         const { data: members } = await supabase
@@ -182,6 +185,9 @@ export default function TournamentPage() {
         if (!members) return;
         const leaderData: { user_id: string; display_name: string; total_points: number }[] = [];
         for (const m of members) {
+            // Исправление: явное приведение типа для m.users
+            const userObj = m.users as { display_name: string } | null;
+            const displayName = userObj?.display_name || 'Anonymous';
             const { data: pointsData } = await supabase
                 .from('predictions')
                 .select('points_earned')
@@ -190,7 +196,7 @@ export default function TournamentPage() {
             const total = pointsData?.reduce((sum, p) => sum + (p.points_earned || 0), 0) || 0;
             leaderData.push({
                 user_id: m.user_id,
-                display_name: m.users?.display_name || 'Anonymous',
+                display_name: displayName,
                 total_points: total,
             });
         }
@@ -202,9 +208,7 @@ export default function TournamentPage() {
         fetchLeaderboard();
     }, [fetchLeaderboard, predictions, matchResults]);
 
-    // Остальные обработчики (saveMatchResult, handlePredictionChange, handleBooster, savePrediction) без изменений
-    // ... (они такие же, как в предыдущей версии)
-
+    // Сохранение результата матча (только создатель)
     const saveMatchResult = async (matchId: string, home: number, away: number) => {
         if (!isCreator) return alert('Только создатель турнира может вводить результаты');
         const { error } = await supabase
