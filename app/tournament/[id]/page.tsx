@@ -21,6 +21,22 @@ interface Match {
     stage_order: number;
 }
 
+// Вспомогательная функция для кэширования
+const CACHE_TTL = 60 * 60 * 1000; // 1 час
+
+async function fetchWithCache(key: string, fetcher: () => Promise<any>) {
+    const cached = localStorage.getItem(key);
+    if (cached) {
+        const { data, timestamp } = JSON.parse(cached);
+        if (Date.now() - timestamp < CACHE_TTL) {
+            return data;
+        }
+    }
+    const data = await fetcher();
+    localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }));
+    return data;
+}
+
 export default function TournamentPage() {
     const { id } = useParams();
     const [matches, setMatches] = useState<Match[]>([]);
@@ -33,8 +49,10 @@ export default function TournamentPage() {
     const [leaderboard, setLeaderboard] = useState<{ user_id: string; display_name: string; total_points: number }[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [loadStatus, setLoadStatus] = useState(''); // детальный статус
     const abortControllerRef = useRef<AbortController | null>(null);
 
+    // Получение пользователя
     useEffect(() => {
         supabase.auth.getUser().then(({ data }) => {
             if (!data.user) return;
@@ -56,7 +74,8 @@ export default function TournamentPage() {
         });
     }, [id]);
 
-    const fetchMatchesWithRetry = useCallback(async (retries = 2) => {
+    // Основная функция загрузки данных с параллельными запросами и кэшем
+    const fetchAllData = useCallback(async () => {
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
         abortControllerRef.current = controller;
@@ -64,69 +83,70 @@ export default function TournamentPage() {
         setLoading(true);
         setError(null);
 
-        for (let attempt = 0; attempt <= retries; attempt++) {
-            try {
-                const { data: matchesData, error: matchesError } = await supabase
-                    .from('matches')
-                    .select('*')
-                    .order('kickoff_at', { ascending: true })
-                    .abortSignal(controller.signal);
-
-                if (matchesError) throw matchesError;
-                if (!matchesData || matchesData.length === 0) {
-                    setMatches([]);
-                    setLoading(false);
-                    return;
-                }
-
-                const { data: teamsData } = await supabase.from('teams').select('id, team_name');
-                const teamsMap = new Map();
-                teamsData?.forEach(t => teamsMap.set(String(t.id), t.team_name));
-
-                const { data: citiesData } = await supabase.from('host_cities').select('id, city_name, venue_name');
-                const citiesMap = new Map();
-                citiesData?.forEach(c => citiesMap.set(String(c.id), { city_name: c.city_name, venue_name: c.venue_name }));
-
-                const { data: stagesData } = await supabase.from('tournament_stages').select('id, stage_name, stage_order');
-                const stagesMap = new Map();
-                stagesData?.forEach(s => stagesMap.set(String(s.id), { stage_name: s.stage_name, stage_order: s.stage_order }));
-
-                const fullMatches = matchesData.map(m => {
-                    const city = citiesMap.get(String(m.city_id)) || { city_name: '', venue_name: '' };
-                    const stage = stagesMap.get(String(m.stage_id)) || { stage_name: '', stage_order: 0 };
-                    return {
-                        ...m,
-                        home_team_name: teamsMap.get(String(m.home_team_id)) || 'TBD',
-                        away_team_name: teamsMap.get(String(m.away_team_id)) || 'TBD',
-                        city_name: city.city_name,
-                        venue_name: city.venue_name,
-                        stage_name: stage.stage_name,
-                        stage_order: stage.stage_order,
-                    };
-                });
-                setMatches(fullMatches);
+        try {
+            // 1. Загружаем матчи (без кэша, так как они могут обновляться)
+            setLoadStatus('Загрузка матчей...');
+            const { data: matchesData, error: matchesError } = await supabase
+                .from('matches')
+                .select('*')
+                .order('kickoff_at', { ascending: true })
+                .abortSignal(controller.signal);
+            if (matchesError) throw matchesError;
+            if (!matchesData || matchesData.length === 0) {
+                setMatches([]);
                 setLoading(false);
                 return;
-            } catch (err: any) {
-                if (err.name === 'AbortError') return;
-                console.error(`Attempt ${attempt + 1} failed:`, err);
-                if (attempt === retries) {
-                    setError('Не удалось загрузить матчи. Проверьте соединение и попробуйте снова.');
-                    setLoading(false);
-                } else {
-                    await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
-                }
             }
+
+            // 2. Параллельно загружаем справочники (с кэшем)
+            setLoadStatus('Загрузка справочников...');
+            const [teamsData, citiesData, stagesData] = await Promise.all([
+                fetchWithCache('teams_cache', () => supabase.from('teams').select('id, team_name')),
+                fetchWithCache('cities_cache', () => supabase.from('host_cities').select('id, city_name, venue_name')),
+                fetchWithCache('stages_cache', () => supabase.from('tournament_stages').select('id, stage_name, stage_order')),
+            ]);
+
+            const teamsMap = new Map();
+            (teamsData?.data || teamsData)?.forEach((t: any) => teamsMap.set(String(t.id), t.team_name));
+
+            const citiesMap = new Map();
+            (citiesData?.data || citiesData)?.forEach((c: any) => citiesMap.set(String(c.id), { city_name: c.city_name, venue_name: c.venue_name }));
+
+            const stagesMap = new Map();
+            (stagesData?.data || stagesData)?.forEach((s: any) => stagesMap.set(String(s.id), { stage_name: s.stage_name, stage_order: s.stage_order }));
+
+            // Формируем полные матчи
+            const fullMatches = matchesData.map((m: any) => {
+                const city = citiesMap.get(String(m.city_id)) || { city_name: '', venue_name: '' };
+                const stage = stagesMap.get(String(m.stage_id)) || { stage_name: '', stage_order: 0 };
+                return {
+                    ...m,
+                    home_team_name: teamsMap.get(String(m.home_team_id)) || 'TBD',
+                    away_team_name: teamsMap.get(String(m.away_team_id)) || 'TBD',
+                    city_name: city.city_name,
+                    venue_name: city.venue_name,
+                    stage_name: stage.stage_name,
+                    stage_order: stage.stage_order,
+                };
+            });
+            setMatches(fullMatches);
+            setLoading(false);
+        } catch (err: any) {
+            if (err.name === 'AbortError') return;
+            console.error(err);
+            setError('Не удалось загрузить данные. Проверьте соединение.');
+            setLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        fetchMatchesWithRetry();
+        fetchAllData();
         return () => {
             if (abortControllerRef.current) abortControllerRef.current.abort();
         };
-    }, [fetchMatchesWithRetry]);
+    }, [fetchAllData]);
 
+    // Остальные useEffect (результаты, прогнозы, бустеры, лидерборд) оставляем без изменений
     useEffect(() => {
         const fetchResults = async () => {
             const { data } = await supabase.from('match_results').select('match_id, score_home, score_away');
@@ -272,11 +292,16 @@ export default function TournamentPage() {
     }, {} as Record<number, Match[]>);
 
     if (!user) return <div className="p-4">Загрузка пользователя...</div>;
-    if (loading) return <div className="p-4">Загрузка матчей...</div>;
+    if (loading) return (
+        <div className="p-4">
+            <p>Загрузка...</p>
+            <p className="text-sm text-gray-500">{loadStatus}</p>
+        </div>
+    );
     if (error) return (
         <div className="p-4">
             <p className="text-red-500">{error}</p>
-            <button onClick={() => fetchMatchesWithRetry()} className="mt-2 bg-blue-500 text-white p-2 rounded">Повторить</button>
+            <button onClick={() => fetchAllData()} className="mt-2 bg-blue-500 text-white p-2 rounded">Повторить</button>
         </div>
     );
 
