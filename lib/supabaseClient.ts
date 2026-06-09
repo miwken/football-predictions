@@ -8,11 +8,15 @@ export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey, {
         path: '/',
         sameSite: 'lax',
         secure: process.env.NODE_ENV === 'production',
+        // Не указываем domain явно, чтобы работало на всех поддоменах Vercel
     },
     global: {
         fetch: (url, options) => {
-            // Добавляем таймаут для мобильных сетей
-            return fetch(url, { ...options, signal: AbortSignal.timeout(15000) });
+            // Увеличиваем таймаут до 30 секунд для мобильных сетей
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000);
+            return fetch(url, { ...options, signal: controller.signal })
+                .finally(() => clearTimeout(timeoutId));
         }
     }
 });
