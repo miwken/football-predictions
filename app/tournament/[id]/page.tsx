@@ -283,9 +283,9 @@ export default function TournamentPage() {
         }));
     };
 
-    // Новая логика бустера с возможностью переназначения
+    // логика бустеров
     const handleBooster = async (matchId: string, stageOrder: number) => {
-        // 1. Проверяем, не начался ли уже какой-то матч этого тура
+        // Проверка, не начался ли какой-то матч тура
         const matchesInRound = matches.filter(m => m.stage_order === stageOrder);
         const anyMatchStarted = matchesInRound.some(m => new Date() >= new Date(m.kickoff_at));
         if (anyMatchStarted) {
@@ -299,38 +299,44 @@ export default function TournamentPage() {
             return;
         }
 
-        // 2. Если бустер уже был на другом матче, спрашиваем подтверждение
+        // Подтверждение переназначения
         let confirmed = true;
         if (currentBoosterMatchId) {
             const oldMatch = matches.find(m => m.id === currentBoosterMatchId);
-            confirmed = confirm(`Бустер уже назначен на матч ${oldMatch?.home_team_name} vs ${oldMatch?.away_team_name}. Переназначить на текущий матч?`);
+            confirmed = confirm(
+                `Бустер уже назначен на матч ${oldMatch?.home_team_name} vs ${oldMatch?.away_team_name}. Переназначить на текущий матч?`
+            );
         }
         if (!confirmed) return;
 
-        // 3. Удаляем старый бустер, если был
+        // 1. Удаляем старый бустер (если был)
         if (currentBoosterMatchId) {
-            await supabase
+            const { error: delError } = await supabase
                 .from('tournament_boosters')
                 .delete()
                 .eq('tournament_id', id)
                 .eq('user_id', user.id)
                 .eq('round_number', stageOrder);
+            if (delError) {
+                alert('Ошибка при удалении бустера: ' + delError.message);
+                return;
+            }
         }
 
-        // 4. Вставляем новый бустер
-        const { error } = await supabase
+        // 2. Вставляем новый бустер
+        const { error: insertError } = await supabase
             .from('tournament_boosters')
             .insert([{ tournament_id: id, user_id: user.id, round_number: stageOrder, match_id: matchId }]);
-        if (error) {
-            alert(error.message);
+        if (insertError) {
+            alert('Ошибка при назначении бустера: ' + insertError.message);
             return;
         }
 
-        // 5. Обновляем локальное состояние
+        // 3. Обновляем локальное состояние
         setBoostedRounds(prev => new Set(prev).add(stageOrder));
         setBoosterMatchByRound(prev => ({ ...prev, [stageOrder]: matchId }));
 
-        // 6. Обновляем predictions: убираем бустер у старого матча, ставим у нового
+        // 4. Обновляем predictions
         setPredictions(prev => {
             const newPred = { ...prev };
             if (currentBoosterMatchId && newPred[currentBoosterMatchId]) {
