@@ -293,44 +293,32 @@ export default function TournamentPage() {
             return;
         }
 
-        // 1. Удаляем любой старый бустер на этот тур (для этого пользователя и турнира)
-        const { error: delError } = await supabase
+        // Upsert: если запись с таким составным ключом есть, обновляем match_id
+        const { error } = await supabase
             .from('tournament_boosters')
-            .delete()
-            .eq('tournament_id', id)
-            .eq('user_id', user.id)
-            .eq('round_number', stageOrder);
+            .upsert(
+                { tournament_id: id, user_id: user.id, round_number: stageOrder, match_id: matchId, applied_at: new Date() },
+                { onConflict: 'tournament_id, user_id, round_number' }
+            );
 
-        if (delError) {
-            alert('Ошибка при удалении бустера: ' + delError.message);
+        if (error) {
+            alert('Ошибка при назначении бустера: ' + error.message);
             return;
         }
 
-        // 2. Вставляем новый бустер
-        const { error: insertError } = await supabase
-            .from('tournament_boosters')
-            .insert([{ tournament_id: id, user_id: user.id, round_number: stageOrder, match_id: matchId }]);
-
-        if (insertError) {
-            alert('Ошибка при назначении бустера: ' + insertError.message);
-            return;
-        }
-
-        // 3. Обновляем локальные состояния
+        // Обновляем локальные состояния
         setBoostedRounds(prev => new Set(prev).add(stageOrder));
         setBoosterMatchByRound(prev => ({ ...prev, [stageOrder]: matchId }));
 
-        // 4. Обновляем predictions: убираем бустер у всех матчей этого тура, ставим на выбранный
+        // Обновляем predictions: снимаем бустер со всех матчей тура и ставим на выбранный
         setPredictions(prev => {
             const newPred = { ...prev };
-            // Снять бустер со всех матчей тура
             Object.keys(newPred).forEach(mid => {
                 const m = matches.find(m => m.id === mid);
                 if (m && m.stage_order === stageOrder && newPred[mid]) {
                     newPred[mid] = { ...newPred[mid], booster: false };
                 }
             });
-            // Поставить бустер на текущий матч
             if (newPred[matchId]) {
                 newPred[matchId] = { ...newPred[matchId], booster: true };
             } else {
