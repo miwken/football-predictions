@@ -39,10 +39,10 @@ async function setCache(key: string, data: any) {
 }
 
 const getBoosterLimit = (stageOrder: number): number => {
-    if (stageOrder <= 3) return 4;      // групповые туры 1-3
+    if (stageOrder <= 3) return 4;
     if (stageOrder === 4) return 3;
     if (stageOrder === 5) return 2;
-    return 1; // начиная с 6-го тура и далее
+    return 1;
 };
 
 export default function TournamentPage() {
@@ -60,26 +60,20 @@ export default function TournamentPage() {
     const [loadStatus, setLoadStatus] = useState('');
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    // Бустеры
     const [boosterMatchIds, setBoosterMatchIds] = useState<Set<string>>(new Set());
     const [boostersCountByRound, setBoostersCountByRound] = useState<Record<number, number>>({});
 
-    // Навигация по турам
     const [activeStageKey, setActiveStageKey] = useState<string | null>(null);
     const stageRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-    // Проверка сессии
+    // Auth
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
-            if (!session) {
-                router.push('/auth/login');
-            } else {
-                setUser(session.user);
-            }
+            if (!session) router.push('/auth/login');
+            else setUser(session.user);
         });
     }, [router]);
 
-    // Название турнира
     useEffect(() => {
         if (!id) return;
         supabase.from('tournaments').select('name').eq('id', id).single().then(({ data }) => {
@@ -87,7 +81,6 @@ export default function TournamentPage() {
         });
     }, [id]);
 
-    // Проверка создателя
     useEffect(() => {
         if (!user || !id) return;
         supabase
@@ -100,7 +93,6 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
-    // Загрузка матчей + справочников с кэшем
     const fetchAllData = useCallback(async (forceRefresh = false) => {
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
@@ -185,7 +177,6 @@ export default function TournamentPage() {
         };
     }, [fetchAllData, user]);
 
-    // Результаты матчей
     useEffect(() => {
         const fetchResults = async () => {
             const { data } = await supabase.from('match_results').select('match_id, score_home, score_away');
@@ -198,7 +189,6 @@ export default function TournamentPage() {
         fetchResults();
     }, []);
 
-    // Прогнозы пользователя
     useEffect(() => {
         if (!user || !id) return;
         supabase
@@ -217,7 +207,6 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
-    // Загрузка бустеров
     useEffect(() => {
         if (!user || !id) return;
         supabase
@@ -242,7 +231,6 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
-    // Таблица лидеров
     const fetchLeaderboard = useCallback(async () => {
         if (!id) return;
         const { data: members } = await supabase
@@ -273,7 +261,6 @@ export default function TournamentPage() {
         fetchLeaderboard();
     }, [fetchLeaderboard, predictions, matchResults]);
 
-    // Определение активного тура по времени
     const matchesByStage = matches.reduce((acc, match) => {
         let key: string;
         if (match.stage_order && match.stage_order > 0) key = String(match.stage_order);
@@ -295,8 +282,7 @@ export default function TournamentPage() {
         if (stageKeys.length === 0) return;
         let activeKey: string | null = null;
         for (const key of stageKeys) {
-            const matchesInStage = matchesByStage[key];
-            const hasStarted = matchesInStage.some(m => new Date(m.kickoff_at) <= now);
+            const hasStarted = matchesByStage[key].some(m => new Date(m.kickoff_at) <= now);
             if (hasStarted) activeKey = key;
         }
         setActiveStageKey(activeKey ?? stageKeys[0]);
@@ -472,12 +458,12 @@ export default function TournamentPage() {
                                         setActiveStageKey(key);
                                         stageRefs.current[key]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
                                     }}
-                                    className={`px-4 py-2 text-sm font-medium rounded-t-lg transition ${isActive
+                                    className={`px-4 py-2 text-base font-medium rounded-t-lg transition whitespace-nowrap ${isActive
                                             ? 'bg-blue-500 text-white border-b-2 border-blue-700'
                                             : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                                         }`}
                                 >
-                                    {stageName} <span className="text-xs">{boosterInfo}</span>
+                                    {stageName} <span className="text-xs ml-1">{boosterInfo}</span>
                                 </button>
                             );
                         })}
@@ -490,11 +476,7 @@ export default function TournamentPage() {
                 <h2 className="text-xl font-semibold mb-2">Таблица лидеров</h2>
                 <table className="min-w-full bg-white">
                     <thead>
-                        <tr>
-                            <th className="py-2 px-4 border-b">Место</th>
-                            <th className="py-2 px-4 border-b">Участник</th>
-                            <th className="py-2 px-4 border-b">Очки</th>
-                        </tr>
+                        <tr><th className="py-2 px-4 border-b">Место</th><th className="py-2 px-4 border-b">Участник</th><th className="py-2 px-4 border-b">Очки</th></tr>
                     </thead>
                     <tbody>
                         {leaderboard.map((entry, idx) => (
@@ -504,29 +486,22 @@ export default function TournamentPage() {
                                 <td className="py-2 px-4 border-b text-center font-bold">{entry.total_points}</td>
                             </tr>
                         ))}
-                        {leaderboard.length === 0 && (
-                            <tr>
-                                <td colSpan={3} className="text-center py-4">Нет участников</td>
-                            </tr>
-                        )}
+                        {leaderboard.length === 0 && <tr><td colSpan={3} className="text-center py-4">Нет участников</td></tr>}
                     </tbody>
                 </table>
             </div>
 
-            {/* Список матчей по турам */}
+            {/* Список матчей – показываем только активный тур */}
             {sortedStageKeys.map(key => {
+                if (activeStageKey !== key) return null;
                 const stageMatches = matchesByStage[key];
                 const stageOrder = parseInt(key);
                 const stageName = stageMatches[0]?.stage_name || `Тур ${key}`;
-                const isActive = activeStageKey === key;
-                // Если есть навигация и тур не активен – скрываем его (можно показывать только активный)
-                // Но для удобства показываем все, просто активный выделяется и прокручивается
                 return (
                     <div
                         key={key}
                         ref={(el) => { stageRefs.current[key] = el; }}
                         className="mb-8 scroll-mt-4"
-                        style={{ display: sortedStageKeys.length > 1 && !isActive ? 'none' : 'block' }}
                     >
                         <h2 className="text-xl font-semibold bg-gray-100 p-2 flex justify-between">
                             <span>{stageName}</span>
@@ -544,7 +519,7 @@ export default function TournamentPage() {
                             const boosterButtonDisabled = isPast || (hasBooster ? false : used >= limit);
                             return (
                                 <div key={match.id} className="border p-3 mb-2 rounded">
-                                    <div className="font-bold">{match.home_team_name} vs {match.away_team_name}</div>
+                                    <div className="font-bold text-base md:text-lg">{match.home_team_name} vs {match.away_team_name}</div>
                                     <div className="text-sm text-gray-500">
                                         {new Date(match.kickoff_at).toLocaleString()} {match.venue_name && ` • ${match.venue_name}`}
                                     </div>
@@ -553,16 +528,16 @@ export default function TournamentPage() {
                                         <input
                                             type="number"
                                             placeholder="0"
-                                            className="border p-1 w-16 text-center"
+                                            className="border p-2 w-16 text-center text-base"
                                             value={pred.home !== undefined ? pred.home : ''}
                                             onChange={(e) => handlePredictionChange(match.id, 'home', e.target.value)}
                                             disabled={isPast}
                                         />
-                                        <span>-</span>
+                                        <span className="text-base">-</span>
                                         <input
                                             type="number"
                                             placeholder="0"
-                                            className="border p-1 w-16 text-center"
+                                            className="border p-2 w-16 text-center text-base"
                                             value={pred.away !== undefined ? pred.away : ''}
                                             onChange={(e) => handlePredictionChange(match.id, 'away', e.target.value)}
                                             disabled={isPast}
@@ -570,25 +545,25 @@ export default function TournamentPage() {
                                         <button
                                             onClick={() => savePrediction(match)}
                                             disabled={isPast}
-                                            className="bg-blue-500 text-white p-1 px-3 rounded disabled:bg-gray-300"
+                                            className="bg-blue-500 text-white p-2 px-3 rounded disabled:bg-gray-300 text-base"
                                         >
                                             Сохранить
                                         </button>
                                         <button
                                             onClick={() => handleBooster(match)}
                                             disabled={boosterButtonDisabled}
-                                            className={`p-1 px-3 rounded ${hasBooster ? 'bg-green-500 text-white' : boosterButtonDisabled ? 'bg-gray-300' : 'bg-yellow-500 text-white'}`}
+                                            className={`p-2 px-3 rounded text-base ${hasBooster ? 'bg-green-500 text-white' : boosterButtonDisabled ? 'bg-gray-300' : 'bg-yellow-500 text-white'}`}
                                         >
                                             {hasBooster ? 'Бустер ✔' : 'x2 бустер'}
                                         </button>
                                     </div>
                                     {isCreator && (
-                                        <div className="mt-2 pt-2 border-t flex gap-2 items-center">
+                                        <div className="mt-2 pt-2 border-t flex flex-wrap gap-2 items-center">
                                             <span className="text-sm font-medium text-gray-600">Ввести результат:</span>
                                             <input
                                                 type="number"
                                                 placeholder="0"
-                                                className="border p-1 w-16 text-center"
+                                                className="border p-2 w-20 text-center text-base"
                                                 id={`result_home_${match.id}`}
                                                 defaultValue={result?.home ?? ''}
                                             />
@@ -596,7 +571,7 @@ export default function TournamentPage() {
                                             <input
                                                 type="number"
                                                 placeholder="0"
-                                                className="border p-1 w-16 text-center"
+                                                className="border p-2 w-20 text-center text-base"
                                                 id={`result_away_${match.id}`}
                                                 defaultValue={result?.away ?? ''}
                                             />
@@ -607,7 +582,7 @@ export default function TournamentPage() {
                                                     if (home === '' || away === '') return alert('Введите оба значения');
                                                     saveMatchResult(match.id, parseInt(home), parseInt(away));
                                                 }}
-                                                className="bg-green-600 text-white p-1 px-3 rounded"
+                                                className="bg-green-600 text-white p-2 px-3 rounded text-base"
                                             >
                                                 Сохранить результат
                                             </button>
