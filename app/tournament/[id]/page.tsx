@@ -38,6 +38,14 @@ async function setCache(key: string, data: any) {
     localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }));
 }
 
+// Лимиты бустеров по номеру стадии (stage_order)
+const getBoosterLimit = (stageOrder: number): number => {
+    if (stageOrder <= 3) return 4;      // групповые туры 1-3
+    if (stageOrder === 4) return 3;
+    if (stageOrder === 5) return 2;
+    return 1; // начиная с 6-го тура и далее
+};
+
 export default function TournamentPage() {
     const { id } = useParams();
     const router = useRouter();
@@ -46,8 +54,6 @@ export default function TournamentPage() {
     const [user, setUser] = useState<any>(null);
     const [isCreator, setIsCreator] = useState(false);
     const [predictions, setPredictions] = useState<Record<string, { home: number; away: number; booster: boolean }>>({});
-    const [boostedRounds, setBoostedRounds] = useState<Set<number>>(new Set());
-    const [boosterMatchByRound, setBoosterMatchByRound] = useState<Record<number, string>>({});
     const [matchResults, setMatchResults] = useState<Record<string, { home: number; away: number }>>({});
     const [leaderboard, setLeaderboard] = useState<{ user_id: string; display_name: string; total_points: number }[]>([]);
     const [loading, setLoading] = useState(true);
@@ -55,7 +61,11 @@ export default function TournamentPage() {
     const [loadStatus, setLoadStatus] = useState('');
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    // Проверка сессии и редирект
+    // Новые состояния для бустеров
+    const [boosterMatchIds, setBoosterMatchIds] = useState<Set<string>>(new Set()); // id матчей, на которых бустер
+    const [boostersCountByRound, setBoostersCountByRound] = useState<Record<number, number>>({}); // сколько бустеров уже в туре
+
+    // Проверка сессии
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
             if (!session) {
@@ -74,7 +84,7 @@ export default function TournamentPage() {
         });
     }, [id]);
 
-    // Проверка, создатель ли пользователь
+    // Проверка создателя
     useEffect(() => {
         if (!user || !id) return;
         supabase
@@ -87,23 +97,21 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
-    // Основная загрузка данных (матчи + справочники) с кэшем
+    // Загрузка матчей + справочников с кэшем
     const fetchAllData = useCallback(async (forceRefresh = false) => {
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
         abortControllerRef.current = controller;
-
         setLoading(true);
         setError(null);
 
         try {
-            // 1. Матчи
             let matchesData = null;
             if (!forceRefresh) matchesData = await getCached('matches_cache');
             if (matchesData) {
                 setLoadStatus('Загрузка из кэша...');
                 setMatches(matchesData);
-                forceRefresh = true; // в фоне обновим
+                forceRefresh = true;
             }
             if (!matchesData || forceRefresh) {
                 setLoadStatus('Загрузка матчей с сервера...');
@@ -117,7 +125,6 @@ export default function TournamentPage() {
                 if (data && data.length) await setCache('matches_cache', data);
             }
 
-            // 2. Справочники
             setLoadStatus('Загрузка справочников...');
             let teamsData = await getCached('teams_cache');
             if (!teamsData) {
@@ -175,7 +182,7 @@ export default function TournamentPage() {
         };
     }, [fetchAllData, user]);
 
-    // Загрузка результатов матчей
+    // Результаты матчей
     useEffect(() => {
         const fetchResults = async () => {
             const { data } = await supabase.from('match_results').select('match_id, score_home, score_away');
@@ -199,30 +206,35 @@ export default function TournamentPage() {
             .then(({ data }) => {
                 if (data) {
                     const predMap: Record<string, any> = {};
-                    data.forEach(p => { predMap[p.match_id] = { home: p.predicted_home, away: p.predicted_away, booster: p.booster_used }; });
+                    data.forEach(p => {
+                        predMap[p.match_id] = { home: p.predicted_home, away: p.predicted_away, booster: p.booster_used };
+                    });
                     setPredictions(predMap);
                 }
             });
     }, [user, id]);
 
-    // Бустеры (загружаем и номер тура, и match_id)
+    // Загрузка бустеров (новый формат)
     useEffect(() => {
         if (!user || !id) return;
         supabase
             .from('tournament_boosters')
-            .select('round_number, match_id')
-            .eq('user_id', user.id)
+            .select('match_id, round_number')
             .eq('tournament_id', id)
+            .eq('user_id', user.id)
             .then(({ data }) => {
                 if (data) {
-                    const rounds = new Set<number>();
-                    const matchMap: Record<number, string> = {};
+                    const matchSet = new Set<string>();
+                    const roundsCount: Record<number, number> = {};
                     data.forEach(b => {
-                        rounds.add(b.round_number);
-                        matchMap[b.round_number] = b.match_id;
+                        matchSet.add(b.match_id);
+                        roundsCount[b.round_number] = (roundsCount[b.round_number] || 0) + 1;
                     });
-                    setBoostedRounds(rounds);
-                    setBoosterMatchByRound(matchMap);
+                    setBoosterMatchIds(matchSet);
+                    setBoostersCountByRound(roundsCount);
+                } else {
+                    setBoosterMatchIds(new Set());
+                    setBoostersCountByRound({});
                 }
             });
     }, [user, id]);
@@ -258,7 +270,6 @@ export default function TournamentPage() {
         fetchLeaderboard();
     }, [fetchLeaderboard, predictions, matchResults]);
 
-    // Сохранение результата (только создатель)
     const saveMatchResult = async (matchId: string, home: number, away: number) => {
         if (!isCreator) return alert('Только создатель турнира может вводить результаты');
         const { error } = await supabase
@@ -272,7 +283,6 @@ export default function TournamentPage() {
         }
     };
 
-    // Изменение прогноза
     const handlePredictionChange = (matchId: string, field: 'home' | 'away', value: string) => {
         setPredictions(prev => ({
             ...prev,
@@ -283,52 +293,86 @@ export default function TournamentPage() {
         }));
     };
 
-    // логика бустеров
-    const handleBooster = async (matchId: string, stageOrder: number) => {
-        // Проверка, не начался ли какой-то матч тура
-        const matchesInRound = matches.filter(m => m.stage_order === stageOrder);
-        const anyMatchStarted = matchesInRound.some(m => new Date() >= new Date(m.kickoff_at));
-        if (anyMatchStarted) {
-            alert('Нельзя изменить бустер: один из матчей тура уже начался');
+    // Новый обработчик бустера: добавляет или удаляет бустер на матче
+    const handleBooster = async (match: Match) => {
+        const matchId = match.id;
+        const stageOrder = match.stage_order;
+        const isStarted = new Date() >= new Date(match.kickoff_at);
+        if (isStarted) {
+            alert('Нельзя изменить бустер после начала матча');
             return;
         }
 
-        // Upsert: если запись с таким составным ключом есть, обновляем match_id
-        const { error } = await supabase
-            .from('tournament_boosters')
-            .upsert(
-                { tournament_id: id, user_id: user.id, round_number: stageOrder, match_id: matchId, applied_at: new Date() },
-                { onConflict: 'tournament_id, user_id, round_number' }
-            );
+        const hasBooster = boosterMatchIds.has(matchId);
+        const currentCount = boostersCountByRound[stageOrder] || 0;
+        const limit = getBoosterLimit(stageOrder);
 
-        if (error) {
-            alert('Ошибка при назначении бустера: ' + error.message);
-            return;
-        }
-
-        // Обновляем локальные состояния
-        setBoostedRounds(prev => new Set(prev).add(stageOrder));
-        setBoosterMatchByRound(prev => ({ ...prev, [stageOrder]: matchId }));
-
-        // Обновляем predictions: снимаем бустер со всех матчей тура и ставим на выбранный
-        setPredictions(prev => {
-            const newPred = { ...prev };
-            Object.keys(newPred).forEach(mid => {
-                const m = matches.find(m => m.id === mid);
-                if (m && m.stage_order === stageOrder && newPred[mid]) {
-                    newPred[mid] = { ...newPred[mid], booster: false };
-                }
-            });
-            if (newPred[matchId]) {
-                newPred[matchId] = { ...newPred[matchId], booster: true };
-            } else {
-                newPred[matchId] = { home: 0, away: 0, booster: true };
+        if (hasBooster) {
+            // Удаляем бустер
+            const { error } = await supabase
+                .from('tournament_boosters')
+                .delete()
+                .eq('tournament_id', id)
+                .eq('user_id', user.id)
+                .eq('match_id', matchId);
+            if (error) {
+                alert('Ошибка при удалении бустера: ' + error.message);
+                return;
             }
-            return newPred;
-        });
+            // Обновляем локальные состояния
+            setBoosterMatchIds(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(matchId);
+                return newSet;
+            });
+            setBoostersCountByRound(prev => ({
+                ...prev,
+                [stageOrder]: Math.max(0, (prev[stageOrder] || 0) - 1)
+            }));
+            setPredictions(prev => {
+                const newPred = { ...prev };
+                if (newPred[matchId]) newPred[matchId] = { ...newPred[matchId], booster: false };
+                return newPred;
+            });
+        } else {
+            // Добавляем бустер, проверяем лимит
+            if (currentCount >= limit) {
+                alert(`В этом туре можно использовать не более ${limit} бустеров`);
+                return;
+            }
+            const { error } = await supabase
+                .from('tournament_boosters')
+                .upsert(
+                    {
+                        tournament_id: id,
+                        user_id: user.id,
+                        round_number: stageOrder,
+                        match_id: matchId,
+                        applied_at: new Date()
+                    },
+                    { onConflict: 'tournament_id, user_id, match_id' }
+                );
+            if (error) {
+                alert('Ошибка при назначении бустера: ' + error.message);
+                return;
+            }
+            setBoosterMatchIds(prev => new Set(prev).add(matchId));
+            setBoostersCountByRound(prev => ({
+                ...prev,
+                [stageOrder]: (prev[stageOrder] || 0) + 1
+            }));
+            setPredictions(prev => {
+                const newPred = { ...prev };
+                if (newPred[matchId]) {
+                    newPred[matchId] = { ...newPred[matchId], booster: true };
+                } else {
+                    newPred[matchId] = { home: 0, away: 0, booster: true };
+                }
+                return newPred;
+            });
+        }
     };
 
-    // Сохранение прогноза
     const savePrediction = async (match: Match) => {
         const pred = predictions[match.id];
         if (!pred || pred.home === undefined || pred.away === undefined) {
@@ -354,14 +398,11 @@ export default function TournamentPage() {
         }
     };
 
-    // Группировка матчей по этапам (с учётом stage_order)
+    // Группировка матчей по турам
     const matchesByStage: Record<string, Match[]> = matches.reduce((acc, match) => {
         let key: string;
-        if (match.stage_order && match.stage_order > 0) {
-            key = String(match.stage_order);
-        } else {
-            key = match.stage_name || 'other';
-        }
+        if (match.stage_order && match.stage_order > 0) key = String(match.stage_order);
+        else key = match.stage_name || 'other';
         if (!acc[key]) acc[key] = [];
         acc[key].push(match);
         return acc;
@@ -389,6 +430,7 @@ export default function TournamentPage() {
                     <button onClick={() => fetchAllData(true)} className="bg-gray-300 p-1 px-3 rounded text-sm">Сбросить кэш</button>
                 </div>
             )}
+
             {/* Таблица лидеров */}
             <div className="mb-8 p-4 border rounded bg-gray-50">
                 <h2 className="text-xl font-semibold mb-2">Таблица лидеров</h2>
@@ -416,20 +458,22 @@ export default function TournamentPage() {
                     return a.localeCompare(b);
                 })
                 .map(([key, stageMatches]) => {
+                    const stageOrder = parseInt(key);
                     const stageName = stageMatches[0]?.stage_name || `Этап ${key}`;
-                    // Проверяем, можно ли менять бустеры в этом туре (ни один матч не начался)
-                    const canChangeBooster = !stageMatches.some(m => new Date() >= new Date(m.kickoff_at));
+                    const usedBoosters = boostersCountByRound[stageOrder] || 0;
+                    const boosterLimit = getBoosterLimit(stageOrder);
                     return (
                         <div key={key} className="mb-8">
-                            <h2 className="text-xl font-semibold bg-gray-100 p-2">{stageName}</h2>
+                            <h2 className="text-xl font-semibold bg-gray-100 p-2 flex justify-between">
+                                <span>{stageName}</span>
+                                <span className="text-sm font-normal text-gray-600">Бустеры: {usedBoosters}/{boosterLimit}</span>
+                            </h2>
                             {stageMatches.map(match => {
                                 const pred = predictions[match.id] || {};
                                 const isPast = new Date() >= new Date(match.kickoff_at);
-                                const isBoosterOnThisMatch = boosterMatchByRound[match.stage_order] === match.id;
-                                // Кнопка бустера доступна, если матч ещё не начался, и (либо бустер ещё не назначен, либо назначен на другой матч и можно менять)
-                                const boosterDisabled = isPast || (isBoosterOnThisMatch && !canChangeBooster);
-                                const boosterButtonText = isBoosterOnThisMatch ? 'Бустер ✔' : 'x2 бустер';
+                                const hasBooster = boosterMatchIds.has(match.id);
                                 const result = matchResults[match.id];
+                                const boosterButtonDisabled = isPast || (hasBooster ? false : usedBoosters >= boosterLimit);
                                 return (
                                     <div key={match.id} className="border p-3 mb-2 rounded">
                                         <div className="font-bold">{match.home_team_name} vs {match.away_team_name}</div>
@@ -461,14 +505,13 @@ export default function TournamentPage() {
                                                 Сохранить
                                             </button>
                                             <button
-                                                onClick={() => handleBooster(match.id, match.stage_order)}
-                                                disabled={boosterDisabled}
-                                                className={`p-1 px-3 rounded ${boosterDisabled ? 'bg-gray-300' : 'bg-yellow-500 text-white'}`}
+                                                onClick={() => handleBooster(match)}
+                                                disabled={boosterButtonDisabled}
+                                                className={`p-1 px-3 rounded ${hasBooster ? 'bg-green-500 text-white' : boosterButtonDisabled ? 'bg-gray-300' : 'bg-yellow-500 text-white'}`}
                                             >
-                                                {boosterButtonText}
+                                                {hasBooster ? 'Бустер ✔' : 'x2 бустер'}
                                             </button>
                                         </div>
-                                        {/* Блок ввода результата для создателя */}
                                         {isCreator && (
                                             <div className="mt-2 pt-2 border-t flex gap-2 items-center">
                                                 <span className="text-sm font-medium text-gray-600">Ввести результат:</span>
