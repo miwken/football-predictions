@@ -1,6 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+// Если у вас есть SessionProvider, раскомментируйте импорт
+// import SessionProvider from "./SessionProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -15,14 +17,20 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Футбольные прогнозы ЧМ-2026",
   description: "Делай прогнозы на матчи ЧМ-2026 и соревнуйся с друзьями",
-  manifest: "/manifest.json", // Добавлено
-  themeColor: "#3b82f6",       // Добавлено
-  viewport: "width=device-width, initial-scale=1, viewport-fit=cover", // Добавлено
-  appleWebApp: {               // Добавлено для iOS
+  manifest: "/manifest.json",
+  appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
     title: "Прогнозы",
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: true,
+  themeColor: "#3b82f6",
 };
 
 export default function RootLayout({
@@ -41,9 +49,12 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Прогнозы" />
         <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
-        <meta name="theme-color" content="#3b82f6" />
       </head>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {/* <SessionProvider> */}
+        {children}
+        {/* </SessionProvider> */}
+      </body>
     </html>
   );
 }

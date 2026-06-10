@@ -64,7 +64,6 @@ export default function TournamentPage() {
     const [boostersCountByRound, setBoostersCountByRound] = useState<Record<number, number>>({});
 
     const [activeStageKey, setActiveStageKey] = useState<string | null>(null);
-    const stageRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
     // Auth
     useEffect(() => {
@@ -433,6 +432,13 @@ export default function TournamentPage() {
         return a.localeCompare(b);
     });
 
+    const scrollToStage = (key: string) => {
+        const element = document.getElementById(`stage-${key}`);
+        if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    };
+
     return (
         <div className="p-4 max-w-5xl mx-auto">
             <h1 className="text-2xl font-bold mb-4">Турнир: {tournamentName}</h1>
@@ -456,7 +462,7 @@ export default function TournamentPage() {
                                     key={key}
                                     onClick={() => {
                                         setActiveStageKey(key);
-                                        stageRefs.current[key]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                        scrollToStage(key);
                                     }}
                                     className={`px-4 py-2 text-base font-medium rounded-t-lg transition whitespace-nowrap ${isActive
                                             ? 'bg-blue-500 text-white border-b-2 border-blue-700'
@@ -474,33 +480,42 @@ export default function TournamentPage() {
             {/* Таблица лидеров */}
             <div className="mb-8 p-4 border rounded bg-gray-50">
                 <h2 className="text-xl font-semibold mb-2">Таблица лидеров</h2>
-                <table className="min-w-full bg-white">
-                    <thead>
-                        <tr><th className="py-2 px-4 border-b">Место</th><th className="py-2 px-4 border-b">Участник</th><th className="py-2 px-4 border-b">Очки</th></tr>
-                    </thead>
-                    <tbody>
-                        {leaderboard.map((entry, idx) => (
-                            <tr key={entry.user_id} className={entry.user_id === user.id ? 'bg-yellow-100' : ''}>
-                                <td className="py-2 px-4 border-b text-center">{idx + 1}</td>
-                                <td className="py-2 px-4 border-b">{entry.display_name}</td>
-                                <td className="py-2 px-4 border-b text-center font-bold">{entry.total_points}</td>
+                <div className="overflow-x-auto">
+                    <table className="min-w-full bg-white">
+                        <thead>
+                            <tr>
+                                <th className="py-2 px-4 border-b">Место</th>
+                                <th className="py-2 px-4 border-b">Участник</th>
+                                <th className="py-2 px-4 border-b">Очки</th>
                             </tr>
-                        ))}
-                        {leaderboard.length === 0 && <tr><td colSpan={3} className="text-center py-4">Нет участников</td></tr>}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            {leaderboard.map((entry, idx) => (
+                                <tr key={entry.user_id} className={entry.user_id === user.id ? 'bg-yellow-100' : ''}>
+                                    <td className="py-2 px-4 border-b text-center">{idx + 1}</td>
+                                    <td className="py-2 px-4 border-b">{entry.display_name}</td>
+                                    <td className="py-2 px-4 border-b text-center font-bold">{entry.total_points}</td>
+                                </tr>
+                            ))}
+                            {leaderboard.length === 0 && (
+                                <tr>
+                                    <td colSpan={3} className="text-center py-4">Нет участников</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
-            {/* Список матчей – показываем только активный тур */}
+            {/* Список матчей – все туры, каждый с id для прокрутки */}
             {sortedStageKeys.map(key => {
-                if (activeStageKey !== key) return null;
                 const stageMatches = matchesByStage[key];
                 const stageOrder = parseInt(key);
                 const stageName = stageMatches[0]?.stage_name || `Тур ${key}`;
                 return (
                     <div
                         key={key}
-                        ref={(el) => { stageRefs.current[key] = el; }}
+                        id={`stage-${key}`}
                         className="mb-8 scroll-mt-4"
                     >
                         <h2 className="text-xl font-semibold bg-gray-100 p-2 flex justify-between">
