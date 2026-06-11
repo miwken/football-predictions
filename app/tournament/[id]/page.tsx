@@ -21,7 +21,7 @@ interface Match {
     stage_order: number;
 }
 
-const CACHE_TTL = 60 * 60 * 1000; // 1 час
+const CACHE_TTL = 60 * 60 * 1000;
 
 async function getCached(key: string) {
     if (typeof window === 'undefined') return null;
@@ -490,11 +490,7 @@ export default function TournamentPage() {
                                     <td className="py-2 px-4 border-b text-center font-bold">{entry.total_points}</td>
                                 </tr>
                             ))}
-                            {leaderboard.length === 0 && (
-                                <tr>
-                                    <td colSpan={3} className="text-center py-4">Нет участников</td>
-                                </tr>
-                            )}
+                            {leaderboard.length === 0 && <tr><td colSpan={3} className="text-center py-4">Нет участников</td></tr>}
                         </tbody>
                     </table>
                 </div>
