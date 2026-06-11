@@ -65,7 +65,6 @@ export default function TournamentPage() {
 
     const [activeStageKey, setActiveStageKey] = useState<string | null>(null);
 
-    // Авторизация
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
             if (!session) router.push('/auth/login');
@@ -206,7 +205,6 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
-    // Загрузка бустеров (match_ids и количество по раундам)
     useEffect(() => {
         if (!user || !id) return;
         supabase
@@ -230,19 +228,6 @@ export default function TournamentPage() {
                 }
             });
     }, [user, id]);
-
-    const refreshBoostersCount = useCallback(async (round: number) => {
-        if (!user || !id) return;
-        const { data, error } = await supabase
-            .from('tournament_boosters')
-            .select('match_id', { count: 'exact' })
-            .eq('tournament_id', id)
-            .eq('user_id', user.id)
-            .eq('round_number', round);
-        if (!error && data) {
-            setBoostersCountByRound(prev => ({ ...prev, [round]: data.length }));
-        }
-    }, [id, user]);
 
     const fetchLeaderboard = useCallback(async () => {
         if (!id) return;
@@ -351,15 +336,17 @@ export default function TournamentPage() {
                 alert('Ошибка при удалении бустера: ' + error.message);
                 return;
             }
-            // Обновляем локальные данные
             setBoosterMatchIds(prev => {
                 const newSet = new Set(prev);
                 newSet.delete(matchId);
                 return newSet;
             });
-            // Обновляем счётчик бустеров для этого тура
-            await refreshBoostersCount(stageOrder);
-            // Обновляем predictions
+            // Уменьшаем счётчик бустеров для этого тура
+            setBoostersCountByRound(prev => ({
+                ...prev,
+                [stageOrder]: Math.max(0, (prev[stageOrder] || 0) - 1)
+            }));
+            // Обновляем прогноз
             setPredictions(prev => {
                 const newPred = { ...prev };
                 if (newPred[matchId]) newPred[matchId] = { ...newPred[matchId], booster: false };
@@ -370,7 +357,6 @@ export default function TournamentPage() {
                 alert(`В этом туре можно использовать не более ${limit} бустеров`);
                 return;
             }
-            // Добавляем бустер
             const { error } = await supabase
                 .from('tournament_boosters')
                 .upsert(
@@ -388,7 +374,10 @@ export default function TournamentPage() {
                 return;
             }
             setBoosterMatchIds(prev => new Set(prev).add(matchId));
-            await refreshBoostersCount(stageOrder);
+            setBoostersCountByRound(prev => ({
+                ...prev,
+                [stageOrder]: (prev[stageOrder] || 0) + 1
+            }));
             setPredictions(prev => {
                 const newPred = { ...prev };
                 if (newPred[matchId]) {
