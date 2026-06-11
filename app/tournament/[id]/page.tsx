@@ -21,7 +21,7 @@ interface Match {
     stage_order: number;
 }
 
-const CACHE_TTL = 60 * 60 * 1000; // 1 час
+const CACHE_TTL = 60 * 60 * 1000;
 
 async function getCached(key: string) {
     if (typeof window === 'undefined') return null;
@@ -63,9 +63,10 @@ export default function TournamentPage() {
     const [boosterMatchIds, setBoosterMatchIds] = useState<Set<string>>(new Set());
     const [boostersCountByRound, setBoostersCountByRound] = useState<Record<number, number>>({});
 
+    // Текущий отображаемый тур (активный)
     const [activeStageKey, setActiveStageKey] = useState<string | null>(null);
 
-    // Auth
+    // Авторизация
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
             if (!session) router.push('/auth/login');
@@ -92,6 +93,7 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
+    // Загрузка всех данных (матчи + справочники)
     const fetchAllData = useCallback(async (forceRefresh = false) => {
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
@@ -176,6 +178,7 @@ export default function TournamentPage() {
         };
     }, [fetchAllData, user]);
 
+    // Результаты матчей
     useEffect(() => {
         const fetchResults = async () => {
             const { data } = await supabase.from('match_results').select('match_id, score_home, score_away');
@@ -188,6 +191,7 @@ export default function TournamentPage() {
         fetchResults();
     }, []);
 
+    // Прогнозы пользователя
     useEffect(() => {
         if (!user || !id) return;
         supabase
@@ -206,6 +210,7 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
+    // Бустеры
     useEffect(() => {
         if (!user || !id) return;
         supabase
@@ -230,6 +235,7 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
+    // Таблица лидеров
     const fetchLeaderboard = useCallback(async () => {
         if (!id) return;
         const { data: members } = await supabase
@@ -260,6 +266,7 @@ export default function TournamentPage() {
         fetchLeaderboard();
     }, [fetchLeaderboard, predictions, matchResults]);
 
+    // Группировка матчей по этапам
     const matchesByStage = matches.reduce((acc, match) => {
         let key: string;
         if (match.stage_order && match.stage_order > 0) key = String(match.stage_order);
@@ -269,6 +276,7 @@ export default function TournamentPage() {
         return acc;
     }, {} as Record<string, Match[]>);
 
+    // Определение активного тура по времени (при первой загрузке)
     useEffect(() => {
         if (matches.length === 0) return;
         const now = new Date();
@@ -287,6 +295,7 @@ export default function TournamentPage() {
         setActiveStageKey(activeKey ?? stageKeys[0]);
     }, [matches, matchesByStage]);
 
+    // Сохранение результата (создатель)
     const saveMatchResult = async (matchId: string, home: number, away: number) => {
         if (!isCreator) return alert('Только создатель турнира может вводить результаты');
         const { error } = await supabase
@@ -310,6 +319,7 @@ export default function TournamentPage() {
         }));
     };
 
+    // Обработчик бустера
     const handleBooster = async (match: Match) => {
         const matchId = match.id;
         const stageOrder = match.stage_order;
@@ -432,23 +442,21 @@ export default function TournamentPage() {
         return a.localeCompare(b);
     });
 
-    const scrollToStage = (key: string) => {
-        const element = document.getElementById(`stage-${key}`);
-        if (element) {
-            element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-    };
+    // Данные для отображаемого тура
+    const currentStageMatches = activeStageKey ? matchesByStage[activeStageKey] : [];
+    const currentStageOrder = activeStageKey ? parseInt(activeStageKey) : 0;
+    const currentStageName = currentStageMatches[0]?.stage_name || (activeStageKey ? `Тур ${activeStageKey}` : '');
 
     return (
         <div className="p-4 max-w-5xl mx-auto">
             <h1 className="text-2xl font-bold mb-4">Турнир: {tournamentName}</h1>
             {isCreator && (
                 <div className="mb-4 text-right">
-                    <button onClick={() => fetchAllData(true)} className="bg-gray-300 p-1 px-3 rounded text-sm">Сбросить кэш</button>
+                    <button onClick={() => fetchAllData(true)} className="bg-gray-300 p-2 px-4 rounded text-sm">Сбросить кэш</button>
                 </div>
             )}
 
-            {/* Навигация по турам */}
+            {/* Навигация по турам (кнопки) */}
             {sortedStageKeys.length > 1 && (
                 <div className="mb-4 overflow-x-auto whitespace-nowrap border-b">
                     <div className="flex gap-2">
@@ -460,10 +468,7 @@ export default function TournamentPage() {
                             return (
                                 <button
                                     key={key}
-                                    onClick={() => {
-                                        setActiveStageKey(key);
-                                        scrollToStage(key);
-                                    }}
+                                    onClick={() => setActiveStageKey(key)}
                                     className={`px-4 py-2 text-base font-medium rounded-t-lg transition whitespace-nowrap ${isActive
                                             ? 'bg-blue-500 text-white border-b-2 border-blue-700'
                                             : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -507,109 +512,104 @@ export default function TournamentPage() {
                 </div>
             </div>
 
-            {/* Список матчей – все туры, каждый с id для прокрутки */}
-            {sortedStageKeys.map(key => {
-                const stageMatches = matchesByStage[key];
-                const stageOrder = parseInt(key);
-                const stageName = stageMatches[0]?.stage_name || `Тур ${key}`;
-                return (
-                    <div
-                        key={key}
-                        id={`stage-${key}`}
-                        className="mb-8 scroll-mt-4"
-                    >
-                        <h2 className="text-xl font-semibold bg-gray-100 p-2 flex justify-between">
-                            <span>{stageName}</span>
-                            <span className="text-sm font-normal text-gray-600">
-                                Бустеры: {boostersCountByRound[stageOrder] || 0}/{getBoosterLimit(stageOrder)}
-                            </span>
-                        </h2>
-                        {stageMatches.map(match => {
-                            const pred = predictions[match.id] || {};
-                            const isPast = new Date() >= new Date(match.kickoff_at);
-                            const hasBooster = boosterMatchIds.has(match.id);
-                            const result = matchResults[match.id];
-                            const used = boostersCountByRound[stageOrder] || 0;
-                            const limit = getBoosterLimit(stageOrder);
-                            const boosterButtonDisabled = isPast || (hasBooster ? false : used >= limit);
-                            return (
-                                <div key={match.id} className="border p-3 mb-2 rounded">
-                                    <div className="font-bold text-base md:text-lg">{match.home_team_name} vs {match.away_team_name}</div>
-                                    <div className="text-sm text-gray-500">
-                                        {new Date(match.kickoff_at).toLocaleString()} {match.venue_name && ` • ${match.venue_name}`}
-                                    </div>
-                                    {result && <div className="text-sm text-green-700 mt-1">Результат: {result.home} : {result.away}</div>}
-                                    <div className="flex flex-wrap gap-2 mt-2 items-center">
-                                        <input
-                                            type="number"
-                                            placeholder="0"
-                                            className="border p-2 w-16 text-center text-base"
-                                            value={pred.home !== undefined ? pred.home : ''}
-                                            onChange={(e) => handlePredictionChange(match.id, 'home', e.target.value)}
-                                            disabled={isPast}
-                                        />
-                                        <span className="text-base">-</span>
-                                        <input
-                                            type="number"
-                                            placeholder="0"
-                                            className="border p-2 w-16 text-center text-base"
-                                            value={pred.away !== undefined ? pred.away : ''}
-                                            onChange={(e) => handlePredictionChange(match.id, 'away', e.target.value)}
-                                            disabled={isPast}
-                                        />
-                                        <button
-                                            onClick={() => savePrediction(match)}
-                                            disabled={isPast}
-                                            className="bg-blue-500 text-white p-2 px-3 rounded disabled:bg-gray-300 text-base"
-                                        >
-                                            Сохранить
-                                        </button>
-                                        <button
-                                            onClick={() => handleBooster(match)}
-                                            disabled={boosterButtonDisabled}
-                                            className={`p-2 px-3 rounded text-base ${hasBooster ? 'bg-green-500 text-white' : boosterButtonDisabled ? 'bg-gray-300' : 'bg-yellow-500 text-white'}`}
-                                        >
-                                            {hasBooster ? 'Бустер ✔' : 'x2 бустер'}
-                                        </button>
-                                    </div>
-                                    {isCreator && (
-                                        <div className="mt-2 pt-2 border-t flex flex-wrap gap-2 items-center">
-                                            <span className="text-sm font-medium text-gray-600">Ввести результат:</span>
-                                            <input
-                                                type="number"
-                                                placeholder="0"
-                                                className="border p-2 w-20 text-center text-base"
-                                                id={`result_home_${match.id}`}
-                                                defaultValue={result?.home ?? ''}
-                                            />
-                                            <span>-</span>
-                                            <input
-                                                type="number"
-                                                placeholder="0"
-                                                className="border p-2 w-20 text-center text-base"
-                                                id={`result_away_${match.id}`}
-                                                defaultValue={result?.away ?? ''}
-                                            />
-                                            <button
-                                                onClick={() => {
-                                                    const home = (document.getElementById(`result_home_${match.id}`) as HTMLInputElement).value;
-                                                    const away = (document.getElementById(`result_away_${match.id}`) as HTMLInputElement).value;
-                                                    if (home === '' || away === '') return alert('Введите оба значения');
-                                                    saveMatchResult(match.id, parseInt(home), parseInt(away));
-                                                }}
-                                                className="bg-green-600 text-white p-2 px-3 rounded text-base"
-                                            >
-                                                Сохранить результат
-                                            </button>
-                                        </div>
-                                    )}
-                                    {isPast && !result && <div className="text-xs text-red-500 mt-1">Прогноз закрыт, результат ещё не введён</div>}
+            {/* Отображаем только выбранный тур */}
+            <div>
+                <h2 className="text-xl font-semibold bg-gray-100 p-2 mb-3 flex justify-between">
+                    <span>{currentStageName}</span>
+                    <span className="text-sm font-normal text-gray-600">
+                        Бустеры: {boostersCountByRound[currentStageOrder] || 0}/{getBoosterLimit(currentStageOrder)}
+                    </span>
+                </h2>
+                {currentStageMatches.map(match => {
+                    const pred = predictions[match.id] || {};
+                    const isPast = new Date() >= new Date(match.kickoff_at);
+                    const hasBooster = boosterMatchIds.has(match.id);
+                    const result = matchResults[match.id];
+                    const used = boostersCountByRound[currentStageOrder] || 0;
+                    const limit = getBoosterLimit(currentStageOrder);
+                    const boosterButtonDisabled = isPast || (hasBooster ? false : used >= limit);
+                    return (
+                        <div key={match.id} className="border p-4 mb-3 rounded shadow-sm">
+                            <div className="font-bold text-lg mb-1">{match.home_team_name} vs {match.away_team_name}</div>
+                            <div className="text-sm text-gray-500 mb-2">
+                                {new Date(match.kickoff_at).toLocaleString()} {match.venue_name && ` • ${match.venue_name}`}
+                            </div>
+                            {result && <div className="text-sm text-green-700 mt-1 mb-2">Результат: {result.home} : {result.away}</div>}
+                            <div className="flex flex-col sm:flex-row gap-3 mt-2">
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="number"
+                                        placeholder="0"
+                                        className="border p-3 w-20 text-center text-lg rounded"
+                                        value={pred.home !== undefined ? pred.home : ''}
+                                        onChange={(e) => handlePredictionChange(match.id, 'home', e.target.value)}
+                                        disabled={isPast}
+                                    />
+                                    <span className="text-xl">-</span>
+                                    <input
+                                        type="number"
+                                        placeholder="0"
+                                        className="border p-3 w-20 text-center text-lg rounded"
+                                        value={pred.away !== undefined ? pred.away : ''}
+                                        onChange={(e) => handlePredictionChange(match.id, 'away', e.target.value)}
+                                        disabled={isPast}
+                                    />
                                 </div>
-                            );
-                        })}
-                    </div>
-                );
-            })}
+                                <div className="flex flex-wrap gap-2">
+                                    <button
+                                        onClick={() => savePrediction(match)}
+                                        disabled={isPast}
+                                        className="bg-blue-500 text-white p-3 px-5 rounded disabled:bg-gray-300 text-base"
+                                    >
+                                        Сохранить
+                                    </button>
+                                    <button
+                                        onClick={() => handleBooster(match)}
+                                        disabled={boosterButtonDisabled}
+                                        className={`p-3 px-5 rounded text-base ${hasBooster ? 'bg-green-500 text-white' : boosterButtonDisabled ? 'bg-gray-300' : 'bg-yellow-500 text-white'}`}
+                                    >
+                                        {hasBooster ? 'Бустер ✔' : 'x2 бустер'}
+                                    </button>
+                                </div>
+                            </div>
+                            {isCreator && (
+                                <div className="mt-4 pt-3 border-t flex flex-col sm:flex-row gap-2 items-start sm:items-center">
+                                    <span className="text-sm font-medium text-gray-600">Ввести результат:</span>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="number"
+                                            placeholder="0"
+                                            className="border p-3 w-20 text-center text-lg rounded"
+                                            id={`result_home_${match.id}`}
+                                            defaultValue={result?.home ?? ''}
+                                        />
+                                        <span>-</span>
+                                        <input
+                                            type="number"
+                                            placeholder="0"
+                                            className="border p-3 w-20 text-center text-lg rounded"
+                                            id={`result_away_${match.id}`}
+                                            defaultValue={result?.away ?? ''}
+                                        />
+                                        <button
+                                            onClick={() => {
+                                                const home = (document.getElementById(`result_home_${match.id}`) as HTMLInputElement).value;
+                                                const away = (document.getElementById(`result_away_${match.id}`) as HTMLInputElement).value;
+                                                if (home === '' || away === '') return alert('Введите оба значения');
+                                                saveMatchResult(match.id, parseInt(home), parseInt(away));
+                                            }}
+                                            className="bg-green-600 text-white p-3 px-5 rounded text-base"
+                                        >
+                                            Сохранить результат
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                            {isPast && !result && <div className="text-xs text-red-500 mt-2">Прогноз закрыт, результат ещё не введён</div>}
+                        </div>
+                    );
+                })}
+            </div>
         </div>
     );
 }
