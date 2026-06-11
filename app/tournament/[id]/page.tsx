@@ -21,7 +21,7 @@ interface Match {
     stage_order: number;
 }
 
-const CACHE_TTL = 60 * 60 * 1000;
+const CACHE_TTL = 60 * 60 * 1000; // 1 час
 
 async function getCached(key: string) {
     if (typeof window === 'undefined') return null;
@@ -64,7 +64,7 @@ export default function TournamentPage() {
     const [boostersCountByRound, setBoostersCountByRound] = useState<Record<number, number>>({});
     const [activeStageKey, setActiveStageKey] = useState<string | null>(null);
 
-    // Авторизация
+    // Auth
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
             if (!session) router.push('/auth/login');
@@ -268,7 +268,6 @@ export default function TournamentPage() {
         return acc;
     }, {} as Record<string, Match[]>);
 
-    // Определение активного тура
     useEffect(() => {
         if (matches.length === 0) return;
         const now = new Date();
@@ -326,7 +325,6 @@ export default function TournamentPage() {
         const limit = getBoosterLimit(stageOrder);
 
         if (hasBooster) {
-            // Удаляем бустер
             const { error } = await supabase
                 .from('tournament_boosters')
                 .delete()
@@ -337,7 +335,6 @@ export default function TournamentPage() {
                 alert('Ошибка при удалении бустера: ' + error.message);
                 return;
             }
-            // Обновляем локальные данные
             setBoosterMatchIds(prev => {
                 const newSet = new Set(prev);
                 newSet.delete(matchId);
@@ -357,7 +354,6 @@ export default function TournamentPage() {
                 alert(`В этом туре можно использовать не более ${limit} бустеров`);
                 return;
             }
-            // Добавляем бустер
             const { error } = await supabase
                 .from('tournament_boosters')
                 .upsert(
@@ -437,7 +433,7 @@ export default function TournamentPage() {
         return a.localeCompare(b);
     });
 
-    const currentStageMatches = activeStageKey ? (matchesByStage[activeStageKey] || []) : [];
+    const currentStageMatches = activeStageKey ? matchesByStage[activeStageKey] : [];
     const currentStageOrder = activeStageKey ? parseInt(activeStageKey) : 0;
     const currentStageName = currentStageMatches[0]?.stage_name || (activeStageKey ? `Тур ${activeStageKey}` : '');
 
@@ -455,8 +451,7 @@ export default function TournamentPage() {
                     <div className="flex gap-2">
                         {sortedStageKeys.map(key => {
                             const stageOrderNum = parseInt(key);
-                            const matchesArray = matchesByStage[key] || [];
-                            const stageName = matchesArray[0]?.stage_name || `Тур ${key}`;
+                            const stageName = matchesByStage[key][0]?.stage_name || `Тур ${key}`;
                             const isActive = activeStageKey === key;
                             const boosterInfo = `(${boostersCountByRound[stageOrderNum] || 0}/${getBoosterLimit(stageOrderNum)})`;
                             return (
@@ -481,7 +476,12 @@ export default function TournamentPage() {
                 <div className="overflow-x-auto">
                     <table className="min-w-full bg-white">
                         <thead>
-                            <tr><th className="py-2 px-4 border-b">Место</th><th className="py-2 px-4 border-b">Участник</th><th className="py-2 px-4 border-b">Очки</th></tr></thead>
+                            <tr>
+                                <th className="py-2 px-4 border-b">Место</th>
+                                <th className="py-2 px-4 border-b">Участник</th>
+                                <th className="py-2 px-4 border-b">Очки</th>
+                            </tr>
+                        </thead>
                         <tbody>
                             {leaderboard.map((entry, idx) => (
                                 <tr key={entry.user_id} className={entry.user_id === user.id ? 'bg-yellow-100' : ''}>
@@ -491,7 +491,9 @@ export default function TournamentPage() {
                                 </tr>
                             ))}
                             {leaderboard.length === 0 && (
-                                <tr><td colSpan={3} className="text-center py-4">Нет участников</td></tr>
+                                <tr>
+                                    <td colSpan={3} className="text-center py-4">Нет участников</td>
+                                </tr>
                             )}
                         </tbody>
                     </table>
