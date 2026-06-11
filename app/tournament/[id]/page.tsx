@@ -63,7 +63,6 @@ export default function TournamentPage() {
     const [boosterMatchIds, setBoosterMatchIds] = useState<Set<string>>(new Set());
     const [boostersCountByRound, setBoostersCountByRound] = useState<Record<number, number>>({});
 
-    // Текущий отображаемый тур (активный)
     const [activeStageKey, setActiveStageKey] = useState<string | null>(null);
 
     // Авторизация
@@ -93,7 +92,6 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
-    // Загрузка всех данных (матчи + справочники)
     const fetchAllData = useCallback(async (forceRefresh = false) => {
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
@@ -178,7 +176,6 @@ export default function TournamentPage() {
         };
     }, [fetchAllData, user]);
 
-    // Результаты матчей
     useEffect(() => {
         const fetchResults = async () => {
             const { data } = await supabase.from('match_results').select('match_id, score_home, score_away');
@@ -191,7 +188,6 @@ export default function TournamentPage() {
         fetchResults();
     }, []);
 
-    // Прогнозы пользователя
     useEffect(() => {
         if (!user || !id) return;
         supabase
@@ -210,7 +206,7 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
-    // Бустеры
+    // Загрузка бустеров (match_ids и количество по раундам)
     useEffect(() => {
         if (!user || !id) return;
         supabase
@@ -235,7 +231,19 @@ export default function TournamentPage() {
             });
     }, [user, id]);
 
-    // Таблица лидеров
+    const refreshBoostersCount = useCallback(async (round: number) => {
+        if (!user || !id) return;
+        const { data, error } = await supabase
+            .from('tournament_boosters')
+            .select('match_id', { count: 'exact' })
+            .eq('tournament_id', id)
+            .eq('user_id', user.id)
+            .eq('round_number', round);
+        if (!error && data) {
+            setBoostersCountByRound(prev => ({ ...prev, [round]: data.length }));
+        }
+    }, [id, user]);
+
     const fetchLeaderboard = useCallback(async () => {
         if (!id) return;
         const { data: members } = await supabase
@@ -266,7 +274,6 @@ export default function TournamentPage() {
         fetchLeaderboard();
     }, [fetchLeaderboard, predictions, matchResults]);
 
-    // Группировка матчей по этапам
     const matchesByStage = matches.reduce((acc, match) => {
         let key: string;
         if (match.stage_order && match.stage_order > 0) key = String(match.stage_order);
@@ -276,7 +283,6 @@ export default function TournamentPage() {
         return acc;
     }, {} as Record<string, Match[]>);
 
-    // Определение активного тура по времени (при первой загрузке)
     useEffect(() => {
         if (matches.length === 0) return;
         const now = new Date();
@@ -295,7 +301,6 @@ export default function TournamentPage() {
         setActiveStageKey(activeKey ?? stageKeys[0]);
     }, [matches, matchesByStage]);
 
-    // Сохранение результата (создатель)
     const saveMatchResult = async (matchId: string, home: number, away: number) => {
         if (!isCreator) return alert('Только создатель турнира может вводить результаты');
         const { error } = await supabase
@@ -310,16 +315,17 @@ export default function TournamentPage() {
     };
 
     const handlePredictionChange = (matchId: string, field: 'home' | 'away', value: string) => {
+        let num = value === '' ? '' : parseInt(value);
+        if (typeof num === 'number' && num < 0) num = 0;
         setPredictions(prev => ({
             ...prev,
             [matchId]: {
                 ...prev[matchId],
-                [field]: value === '' ? '' : parseInt(value),
+                [field]: num,
             }
         }));
     };
 
-    // Обработчик бустера
     const handleBooster = async (match: Match) => {
         const matchId = match.id;
         const stageOrder = match.stage_order;
@@ -334,6 +340,7 @@ export default function TournamentPage() {
         const limit = getBoosterLimit(stageOrder);
 
         if (hasBooster) {
+            // Удаляем бустер
             const { error } = await supabase
                 .from('tournament_boosters')
                 .delete()
@@ -344,15 +351,15 @@ export default function TournamentPage() {
                 alert('Ошибка при удалении бустера: ' + error.message);
                 return;
             }
+            // Обновляем локальные данные
             setBoosterMatchIds(prev => {
                 const newSet = new Set(prev);
                 newSet.delete(matchId);
                 return newSet;
             });
-            setBoostersCountByRound(prev => ({
-                ...prev,
-                [stageOrder]: Math.max(0, (prev[stageOrder] || 0) - 1)
-            }));
+            // Обновляем счётчик бустеров для этого тура
+            await refreshBoostersCount(stageOrder);
+            // Обновляем predictions
             setPredictions(prev => {
                 const newPred = { ...prev };
                 if (newPred[matchId]) newPred[matchId] = { ...newPred[matchId], booster: false };
@@ -363,6 +370,7 @@ export default function TournamentPage() {
                 alert(`В этом туре можно использовать не более ${limit} бустеров`);
                 return;
             }
+            // Добавляем бустер
             const { error } = await supabase
                 .from('tournament_boosters')
                 .upsert(
@@ -380,10 +388,7 @@ export default function TournamentPage() {
                 return;
             }
             setBoosterMatchIds(prev => new Set(prev).add(matchId));
-            setBoostersCountByRound(prev => ({
-                ...prev,
-                [stageOrder]: (prev[stageOrder] || 0) + 1
-            }));
+            await refreshBoostersCount(stageOrder);
             setPredictions(prev => {
                 const newPred = { ...prev };
                 if (newPred[matchId]) {
@@ -442,7 +447,6 @@ export default function TournamentPage() {
         return a.localeCompare(b);
     });
 
-    // Данные для отображаемого тура
     const currentStageMatches = activeStageKey ? matchesByStage[activeStageKey] : [];
     const currentStageOrder = activeStageKey ? parseInt(activeStageKey) : 0;
     const currentStageName = currentStageMatches[0]?.stage_name || (activeStageKey ? `Тур ${activeStageKey}` : '');
@@ -456,7 +460,6 @@ export default function TournamentPage() {
                 </div>
             )}
 
-            {/* Навигация по турам (кнопки) */}
             {sortedStageKeys.length > 1 && (
                 <div className="mb-4 overflow-x-auto whitespace-nowrap border-b">
                     <div className="flex gap-2">
@@ -482,18 +485,12 @@ export default function TournamentPage() {
                 </div>
             )}
 
-            {/* Таблица лидеров */}
             <div className="mb-8 p-4 border rounded bg-gray-50">
                 <h2 className="text-xl font-semibold mb-2">Таблица лидеров</h2>
                 <div className="overflow-x-auto">
                     <table className="min-w-full bg-white">
                         <thead>
-                            <tr>
-                                <th className="py-2 px-4 border-b">Место</th>
-                                <th className="py-2 px-4 border-b">Участник</th>
-                                <th className="py-2 px-4 border-b">Очки</th>
-                            </tr>
-                        </thead>
+                            <tr><th className="py-2 px-4 border-b">Место</th><th className="py-2 px-4 border-b">Участник</th><th className="py-2 px-4 border-b">Очки</th></tr></thead>
                         <tbody>
                             {leaderboard.map((entry, idx) => (
                                 <tr key={entry.user_id} className={entry.user_id === user.id ? 'bg-yellow-100' : ''}>
@@ -502,17 +499,12 @@ export default function TournamentPage() {
                                     <td className="py-2 px-4 border-b text-center font-bold">{entry.total_points}</td>
                                 </tr>
                             ))}
-                            {leaderboard.length === 0 && (
-                                <tr>
-                                    <td colSpan={3} className="text-center py-4">Нет участников</td>
-                                </tr>
-                            )}
+                            {leaderboard.length === 0 && <tr><td colSpan={3} className="text-center py-4">Нет участников</td></tr>}
                         </tbody>
                     </table>
                 </div>
             </div>
 
-            {/* Отображаем только выбранный тур */}
             <div>
                 <h2 className="text-xl font-semibold bg-gray-100 p-2 mb-3 flex justify-between">
                     <span>{currentStageName}</span>
@@ -539,6 +531,7 @@ export default function TournamentPage() {
                                 <div className="flex items-center gap-2">
                                     <input
                                         type="number"
+                                        min="0"
                                         placeholder="0"
                                         className="border p-3 w-20 text-center text-lg rounded"
                                         value={pred.home !== undefined ? pred.home : ''}
@@ -548,6 +541,7 @@ export default function TournamentPage() {
                                     <span className="text-xl">-</span>
                                     <input
                                         type="number"
+                                        min="0"
                                         placeholder="0"
                                         className="border p-3 w-20 text-center text-lg rounded"
                                         value={pred.away !== undefined ? pred.away : ''}
@@ -578,6 +572,7 @@ export default function TournamentPage() {
                                     <div className="flex items-center gap-2">
                                         <input
                                             type="number"
+                                            min="0"
                                             placeholder="0"
                                             className="border p-3 w-20 text-center text-lg rounded"
                                             id={`result_home_${match.id}`}
@@ -586,6 +581,7 @@ export default function TournamentPage() {
                                         <span>-</span>
                                         <input
                                             type="number"
+                                            min="0"
                                             placeholder="0"
                                             className="border p-3 w-20 text-center text-lg rounded"
                                             id={`result_away_${match.id}`}
