@@ -62,9 +62,9 @@ export default function TournamentPage() {
 
     const [boosterMatchIds, setBoosterMatchIds] = useState<Set<string>>(new Set());
     const [boostersCountByRound, setBoostersCountByRound] = useState<Record<number, number>>({});
-
     const [activeStageKey, setActiveStageKey] = useState<string | null>(null);
 
+    // Авторизация
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
             if (!session) router.push('/auth/login');
@@ -268,6 +268,7 @@ export default function TournamentPage() {
         return acc;
     }, {} as Record<string, Match[]>);
 
+    // Определение активного тура
     useEffect(() => {
         if (matches.length === 0) return;
         const now = new Date();
@@ -336,17 +337,16 @@ export default function TournamentPage() {
                 alert('Ошибка при удалении бустера: ' + error.message);
                 return;
             }
+            // Обновляем локальные данные
             setBoosterMatchIds(prev => {
                 const newSet = new Set(prev);
                 newSet.delete(matchId);
                 return newSet;
             });
-            // Уменьшаем счётчик бустеров для этого тура
             setBoostersCountByRound(prev => ({
                 ...prev,
                 [stageOrder]: Math.max(0, (prev[stageOrder] || 0) - 1)
             }));
-            // Обновляем прогноз
             setPredictions(prev => {
                 const newPred = { ...prev };
                 if (newPred[matchId]) newPred[matchId] = { ...newPred[matchId], booster: false };
@@ -357,6 +357,7 @@ export default function TournamentPage() {
                 alert(`В этом туре можно использовать не более ${limit} бустеров`);
                 return;
             }
+            // Добавляем бустер
             const { error } = await supabase
                 .from('tournament_boosters')
                 .upsert(
@@ -436,7 +437,7 @@ export default function TournamentPage() {
         return a.localeCompare(b);
     });
 
-    const currentStageMatches = activeStageKey ? matchesByStage[activeStageKey] : [];
+    const currentStageMatches = activeStageKey ? (matchesByStage[activeStageKey] || []) : [];
     const currentStageOrder = activeStageKey ? parseInt(activeStageKey) : 0;
     const currentStageName = currentStageMatches[0]?.stage_name || (activeStageKey ? `Тур ${activeStageKey}` : '');
 
@@ -454,7 +455,8 @@ export default function TournamentPage() {
                     <div className="flex gap-2">
                         {sortedStageKeys.map(key => {
                             const stageOrderNum = parseInt(key);
-                            const stageName = matchesByStage[key][0]?.stage_name || `Тур ${key}`;
+                            const matchesArray = matchesByStage[key] || [];
+                            const stageName = matchesArray[0]?.stage_name || `Тур ${key}`;
                             const isActive = activeStageKey === key;
                             const boosterInfo = `(${boostersCountByRound[stageOrderNum] || 0}/${getBoosterLimit(stageOrderNum)})`;
                             return (
@@ -488,7 +490,9 @@ export default function TournamentPage() {
                                     <td className="py-2 px-4 border-b text-center font-bold">{entry.total_points}</td>
                                 </tr>
                             ))}
-                            {leaderboard.length === 0 && <tr><td colSpan={3} className="text-center py-4">Нет участников</td></tr>}
+                            {leaderboard.length === 0 && (
+                                <tr><td colSpan={3} className="text-center py-4">Нет участников</td></tr>
+                            )}
                         </tbody>
                     </table>
                 </div>
